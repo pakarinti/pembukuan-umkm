@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Multi Book & Manage Accounts
+        description: Aplikasi Bkper Exact Form Structure
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_multibook.db'),
+            p.join(dbPath, 'bkper_exact_form.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -85,14 +85,13 @@ jobs:
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   book_id INTEGER,
                   date TEXT,
-                  account TEXT,
+                  from_account TEXT,
+                  to_account TEXT,
                   description TEXT,
-                  amount REAL,
-                  type TEXT
+                  amount REAL
                 )
               ''');
 
-              // Buku Bawaan Pertama
               await db.insert('books', {'name': 'Hotel Mulyo Agung'});
             },
             version: 1,
@@ -191,8 +190,10 @@ jobs:
           double _getAccountTotal(String accName) {
             double total = 0;
             for (var tx in _allTransactions) {
-              if (tx['account'] == accName) {
+              if (tx['to_account'] == accName) {
                 total += (tx['amount'] as num).toDouble();
+              } else if (tx['from_account'] == accName) {
+                total -= (tx['amount'] as num).toDouble();
               }
             }
             return total;
@@ -219,18 +220,18 @@ jobs:
 
           Future<void> _deleteAccount(int id, String name) async {
             await widget.database.delete('accounts', where: 'id = ?', whereArgs: [id]);
-            await widget.database.delete('transactions', where: 'book_id = ? AND account = ?', whereArgs: [_currentBookId, name]);
+            await widget.database.delete('transactions', where: 'book_id = ? AND (from_account = ? OR to_account = ?)', whereArgs: [_currentBookId, name, name]);
             _loadDataForCurrentBook();
           }
 
-          Future<void> _addTransaction(String account, String desc, double amount, String type, DateTime date) async {
+          Future<void> _addTransaction(String fromAcc, String toAcc, String desc, double amount, DateTime date) async {
             await widget.database.insert('transactions', {
               'book_id': _currentBookId,
               'date': DateFormat('dd/MM/yyyy').format(date),
-              'account': account,
+              'from_account': fromAcc,
+              'to_account': toAcc,
               'description': desc,
               'amount': amount,
-              'type': type,
             });
             _loadDataForCurrentBook();
           }
@@ -245,7 +246,6 @@ jobs:
             }
           }
 
-          // DIALOG CREATE NEW BOOK
           void _showCreateBookDialog() {
             final bookCtrl = TextEditingController();
             showDialog(
@@ -271,7 +271,6 @@ jobs:
             );
           }
 
-          // DIALOG NEW ACCOUNT (DENGAN TOMBOL "CREATE")
           void _showNewAccountDialog({Map<String, dynamic>? editAcc}) {
             final nameCtrl = TextEditingController(text: editAcc != null ? editAcc['name'] : '');
             String selectedType = editAcc != null ? editAcc['type'] : 'Outgoing';
@@ -319,101 +318,146 @@ jobs:
             );
           }
 
+          // FORM FORMULIR TRANSAKSI EXACT REPLICA BKPER (FROM ACCOUNT -> TO ACCOUNT)
           void _showFormDialog() {
             final descCtrl = TextEditingController();
             final amountCtrl = TextEditingController();
-            String type = 'IN';
             DateTime pickerDate = DateTime.now();
+
+            List<String> accNames = _allAccounts.map((a) => a['name'] as String).toList();
+            String? fromAcc = accNames.isNotEmpty ? accNames.first : null;
+            String? toAcc = accNames.length > 1 ? accNames[1] : (accNames.isNotEmpty ? accNames.first : null);
 
             showModalBottomSheet(
               context: context,
               isScrollControlled: true,
-              backgroundColor: const Color(0xFF1E1E26),
+              backgroundColor: const Color(0xFF14151B),
               builder: (ctx) => StatefulBuilder(
                 builder: (context, setModalState) {
-                  List<String> availableAccounts = [];
-                  if (type == 'IN') {
-                    availableAccounts = _allAccounts
-                        .where((a) => a['type'] == 'Incoming' || a['type'] == 'Asset')
-                        .map((a) => a['name'] as String).toList();
-                  } else {
-                    availableAccounts = _allAccounts
-                        .where((a) => a['type'] == 'Outgoing' || a['type'] == 'Asset' || a['type'] == 'Liability')
-                        .map((a) => a['name'] as String).toList();
-                  }
-
-                  String? selectedAcc = availableAccounts.isNotEmpty ? availableAccounts.first : null;
-
                   return Padding(
                     padding: EdgeInsets.only(top: 16, left: 16, right: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Tambah Transaksi', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                        const SizedBox(height: 10),
-                        ListTile(
-                          tileColor: Colors.black26,
-                          title: Text("Tanggal: ${DateFormat('dd/MM/yyyy').format(pickerDate)}"),
-                          trailing: const Icon(Icons.calendar_today, color: Colors.blueAccent),
-                          onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: pickerDate,
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime(2030),
-                            );
-                            if (picked != null) {
-                              setModalState(() => pickerDate = picked);
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 10),
+                        const Text('New transaction', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                        const SizedBox(height: 15),
                         Row(
                           children: [
                             Expanded(
-                              child: RadioListTile<String>(
-                                title: const Text('Masuk (+)'),
-                                value: 'IN',
-                                groupValue: type,
-                                onChanged: (v) => setModalState(() => type = v!),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Date:', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                  const SizedBox(height: 4),
+                                  InkWell(
+                                    onTap: () async {
+                                      final picked = await showDatePicker(
+                                        context: context,
+                                        initialDate: pickerDate,
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime(2030),
+                                      );
+                                      if (picked != null) setModalState(() => pickerDate = picked);
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                      decoration: BoxDecoration(border: Border.all(color: Colors.white24), borderRadius: BorderRadius.circular(6)),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(DateFormat('dd/MM/yyyy').format(pickerDate), style: const TextStyle(fontSize: 13)),
+                                          const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
+                            const SizedBox(width: 10),
                             Expanded(
-                              child: RadioListTile<String>(
-                                title: const Text('Keluar (-)'),
-                                value: 'OUT',
-                                groupValue: type,
-                                onChanged: (v) => setModalState(() => type = v!),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Amount:', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                  const SizedBox(height: 4),
+                                  TextField(
+                                    controller: amountCtrl,
+                                    keyboardType: TextInputType.number,
+                                    decoration: InputDecoration(
+                                      hintText: '0.00',
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 5),
-                        availableAccounts.isEmpty
-                            ? const Padding(
-                                padding: EdgeInsets.all(8.0),
-                                child: Text('Belum ada akun untuk opsi ini. Tambah akun dulu di tab Accounts.', style: TextStyle(color: Colors.amber, fontSize: 12)),
-                              )
+                        const SizedBox(height: 12),
+                        const Text('From account:', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        const SizedBox(height: 4),
+                        accNames.isEmpty
+                            ? const Text('Belum ada akun.', style: TextStyle(color: Colors.amber, fontSize: 12))
                             : DropdownButtonFormField<String>(
-                                value: selectedAcc,
+                                value: fromAcc,
                                 dropdownColor: const Color(0xFF2C2D38),
-                                items: availableAccounts.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
-                                onChanged: (v) => selectedAcc = v,
-                                decoration: const InputDecoration(labelText: 'Pilih Akun'),
+                                items: accNames.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
+                                onChanged: (v) => setModalState(() => fromAcc = v),
+                                decoration: InputDecoration(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                                ),
                               ),
-                        TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nominal (Rp)')),
-                        TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Keterangan')),
-                        const SizedBox(height: 15),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(45)),
-                          onPressed: () {
-                            final amt = double.tryParse(amountCtrl.text) ?? 0;
-                            if (amt > 0 && selectedAcc != null) {
-                              _addTransaction(selectedAcc!, descCtrl.text, amt, type, pickerDate);
-                              Navigator.pop(ctx);
-                            }
-                          },
-                          child: const Text('Simpan Transaksi'),
+                        const SizedBox(height: 12),
+                        const Text('To account:', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        const SizedBox(height: 4),
+                        accNames.isEmpty
+                            ? const SizedBox()
+                            : DropdownButtonFormField<String>(
+                                value: toAcc,
+                                dropdownColor: const Color(0xFF2C2D38),
+                                items: accNames.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
+                                onChanged: (v) => setModalState(() => toAcc = v),
+                                decoration: InputDecoration(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                                ),
+                              ),
+                        const SizedBox(height: 12),
+                        const Text('Description:', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: descCtrl,
+                          decoration: InputDecoration(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            OutlinedButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              style: OutlinedButton.styleFrom(foregroundColor: Colors.grey),
+                              child: const Text('Close'),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
+                              onPressed: () {
+                                final amt = double.tryParse(amountCtrl.text) ?? 0;
+                                if (amt > 0 && fromAcc != null && toAcc != null) {
+                                  _addTransaction(fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
+                                  Navigator.pop(ctx);
+                                }
+                              },
+                              child: const Text('Post'),
+                            ),
+                          ],
                         )
                       ],
                     ),
@@ -427,7 +471,7 @@ jobs:
           Widget build(BuildContext context) {
             List<Map<String, dynamic>> filteredList = _selectedAccountFilter == null
                 ? _allTransactions
-                : _allTransactions.where((tx) => tx['account'] == _selectedAccountFilter).toList();
+                : _allTransactions.where((tx) => tx['from_account'] == _selectedAccountFilter || tx['to_account'] == _selectedAccountFilter).toList();
 
             final balanceSheetAccs = _allAccounts.where((a) => a['type'] == 'Asset' || a['type'] == 'Liability').toList();
             final incomingOutgoingAccs = _allAccounts.where((a) => a['type'] == 'Incoming' || a['type'] == 'Outgoing').toList();
@@ -435,7 +479,6 @@ jobs:
             return Scaffold(
               appBar: AppBar(
                 backgroundColor: const Color(0xFF1C1D24),
-                // DROPDOWN MULTI-BOOK
                 title: PopupMenuButton<dynamic>(
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -584,16 +627,15 @@ jobs:
                       itemCount: filteredList.length,
                       itemBuilder: (ctx, i) {
                         final tx = filteredList[i];
-                        bool isInc = tx['type'] == 'IN';
                         return Container(
                           decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
                           child: ListTile(
-                            leading: Icon(isInc ? Icons.check_circle_outline : Icons.remove_circle_outline, color: isInc ? Colors.green : Colors.red),
-                            title: Text(tx['description'].isEmpty ? tx['account'] : tx['description']),
-                            subtitle: Text('${tx['date']} • ${tx['account']}'),
+                            leading: const Icon(Icons.check_circle_outline, color: Colors.green),
+                            title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
+                            subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
                             trailing: Text(
                               'Rp ${tx['amount'].toStringAsFixed(0)}',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: isInc ? Colors.green : Colors.red),
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
                             ),
                           ),
                         );
