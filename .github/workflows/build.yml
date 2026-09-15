@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Visual & Book Management Fix
+        description: Aplikasi Bkper Search & Monthly Period Fix
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_visual_fix.db'),
+            p.join(dbPath, 'bkper_final_v2.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -92,7 +92,6 @@ jobs:
                 )
               ''');
 
-              // Default Book Name: Bisnis Anda
               await db.insert('books', {'name': 'Bisnis Anda'});
             },
             version: 1,
@@ -135,6 +134,8 @@ jobs:
           List<Map<String, dynamic>> _allTransactions = [];
           List<Map<String, dynamic>> _allAccounts = [];
           String? _selectedAccountFilter;
+          String _searchQuery = '';
+          DateTime _selectedMonthPeriod = DateTime.now();
 
           @override
           void initState() {
@@ -194,23 +195,30 @@ jobs:
           }
 
           Future<void> _deleteBook(int id) async {
-            if (_books.length <= 1) return; // Mencegah hapus jika tinggal 1 buku
+            if (_books.length <= 1) return;
             await widget.database.delete('books', where: 'id = ?', whereArgs: [id]);
             await widget.database.delete('accounts', where: 'book_id = ?', whereArgs: [id]);
             await widget.database.delete('transactions', where: 'book_id = ?', whereArgs: [id]);
             _loadBooks();
           }
 
-          double _getAccountTotal(Map<String, dynamic> acc) {
+          double _getAccountTotalMonthly(Map<String, dynamic> acc) {
             String accName = acc['name'];
             String accType = acc['type'];
             double total = 0;
+            String monthYearTarget = DateFormat('MM/yyyy').format(_selectedMonthPeriod);
 
             for (var tx in _allTransactions) {
-              if (tx['to_account'] == accName) {
-                total += (tx['amount'] as num).toDouble();
-              } else if (tx['from_account'] == accName) {
-                total += (accType == 'Incoming') ? (tx['amount'] as num).toDouble() : -(tx['amount'] as num).toDouble();
+              String txDateStr = tx['date'];
+              if (txDateStr.length >= 10) {
+                String txMonthYear = txDateStr.substring(3);
+                if (txMonthYear == monthYearTarget) {
+                  if (tx['to_account'] == accName) {
+                    total += (tx['amount'] as num).toDouble();
+                  } else if (tx['from_account'] == accName) {
+                    total += (accType == 'Incoming') ? (tx['amount'] as num).toDouble() : -(tx['amount'] as num).toDouble();
+                  }
+                }
               }
             }
             return total;
@@ -295,7 +303,7 @@ jobs:
                 actions: [
                   TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
                   ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
                     onPressed: () {
                       if (bookCtrl.text.isNotEmpty) {
                         if (bookEdit == null) {
@@ -341,7 +349,7 @@ jobs:
                   actions: [
                     TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
                     ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
                       onPressed: () {
                         if (nameCtrl.text.isNotEmpty) {
                           if (editAcc == null) {
@@ -527,9 +535,15 @@ jobs:
 
           @override
           Widget build(BuildContext context) {
-            List<Map<String, dynamic>> filteredList = _selectedAccountFilter == null
-                ? _allTransactions
-                : _allTransactions.where((tx) => tx['from_account'] == _selectedAccountFilter || tx['to_account'] == _selectedAccountFilter).toList();
+            List<Map<String, dynamic>> filteredList = _allTransactions.where((tx) {
+              bool matchFilter = _selectedAccountFilter == null || tx['from_account'] == _selectedAccountFilter || tx['to_account'] == _selectedAccountFilter;
+              bool matchSearch = _searchQuery.isEmpty ||
+                  tx['description'].toString().toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                  tx['from_account'].toString().toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                  tx['to_account'].toString().toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                  tx['amount'].toString().contains(_searchQuery);
+              return matchFilter && matchSearch;
+            }).toList();
 
             final balanceSheetAccs = _allAccounts.where((a) => a['type'] == 'Asset' || a['type'] == 'Liability').toList();
             final incomingOutgoingAccs = _allAccounts.where((a) => a['type'] == 'Incoming' || a['type'] == 'Outgoing').toList();
@@ -608,127 +622,178 @@ jobs:
               ),
               drawer: Drawer(
                 backgroundColor: const Color(0xFF14151B),
-                child: DefaultTabController(
-                  length: 2,
-                  child: Scaffold(
-                    backgroundColor: Colors.transparent,
-                    appBar: AppBar(
-                      automaticallyImplyLeading: false,
-                      backgroundColor: const Color(0xFF1C1D24),
-                      title: const TabBar(
-                        indicatorColor: Colors.blueAccent,
-                        tabs: [
-                          Tab(text: 'Transactions'),
-                          Tab(text: 'Accounts'),
+                child: StatefulBuilder(
+                  builder: (context, setDrawerState) => DefaultTabController(
+                    length: 2,
+                    child: Scaffold(
+                      backgroundColor: Colors.transparent,
+                      appBar: AppBar(
+                        automaticallyImplyLeading: false,
+                        backgroundColor: const Color(0xFF1C1D24),
+                        title: const TabBar(
+                          indicatorColor: Colors.blueAccent,
+                          tabs: [
+                            Tab(text: 'Transactions'),
+                            Tab(text: 'Accounts'),
+                          ],
+                        ),
+                      ),
+                      body: TabBarView(
+                        children: [
+                          // TAB 1: TRANSACTIONS (DENGAN PEMILIH BULANAN ALA BKPER)
+                          ListView(
+                            padding: const EdgeInsets.all(12),
+                            children: [
+                              // PENULISAN PERIODE BULANAN
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_left, color: Colors.grey),
+                                    onPressed: () {
+                                      setDrawerState(() {
+                                        _selectedMonthPeriod = DateTime(_selectedMonthPeriod.year, _selectedMonthPeriod.month - 1);
+                                      });
+                                      setState(() {});
+                                    },
+                                  ),
+                                  Text(
+                                    DateFormat('MM/yyyy').format(_selectedMonthPeriod),
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.blueAccent),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_right, color: Colors.grey),
+                                    onPressed: () {
+                                      setDrawerState(() {
+                                        _selectedMonthPeriod = DateTime(_selectedMonthPeriod.year, _selectedMonthPeriod.month + 1);
+                                      });
+                                      setState(() {});
+                                    },
+                                  ),
+                                ],
+                              ),
+                              ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(Icons.list, color: Colors.blueAccent),
+                                title: const Text('Semua Transaksi', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                                onTap: () {
+                                  setState(() => _selectedAccountFilter = null);
+                                  Navigator.pop(context);
+                                },
+                              ),
+                              const SizedBox(height: 10),
+                              const Text('Balance Sheet', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
+                              const Divider(color: Colors.white12),
+                              ...balanceSheetAccs.map((acc) => _buildTransactionDrawerItem(acc)),
+                              const SizedBox(height: 20),
+                              const Text('Incoming & Outgoing', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
+                              const Divider(color: Colors.white12),
+                              ...incomingOutgoingAccs.map((acc) => _buildTransactionDrawerItem(acc)),
+                            ],
+                          ),
+                          // TAB 2: ACCOUNTS
+                          Column(
+                            children: [
+                              ListTile(
+                                leading: const Icon(Icons.add, color: Colors.blueAccent),
+                                title: const Text('New account', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  _showNewAccountDialog();
+                                },
+                              ),
+                              const Divider(color: Colors.white12),
+                              Expanded(
+                                child: _allAccounts.isEmpty
+                                    ? const Center(child: Text('Belum ada akun.', style: TextStyle(color: Colors.grey, fontSize: 11)))
+                                    : ListView.builder(
+                                        itemCount: _allAccounts.length,
+                                        itemBuilder: (ctx, i) {
+                                          final acc = _allAccounts[i];
+                                          return ListTile(
+                                            leading: Container(
+                                              width: 14,
+                                              height: 14,
+                                              decoration: BoxDecoration(
+                                                color: _getAccountColor(acc['type']),
+                                                borderRadius: BorderRadius.circular(3),
+                                              ),
+                                            ),
+                                            title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                            trailing: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                IconButton(
+                                                  icon: const Icon(Icons.edit, size: 18, color: Colors.grey),
+                                                  onPressed: () {
+                                                    Navigator.pop(context);
+                                                    _showNewAccountDialog(editAcc: acc);
+                                                  },
+                                                ),
+                                                IconButton(
+                                                  icon: const Icon(Icons.delete, size: 18, color: Colors.redAccent),
+                                                  onPressed: () {
+                                                    _deleteAccount(acc['id'], acc['name']);
+                                                    Navigator.pop(context);
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                      ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
-                    ),
-                    body: TabBarView(
-                      children: [
-                        // TAB 1: TRANSACTIONS (DENGAN GARIS WARNA TIPE AKUN DIPINGGIR KIRI & SALDO POSITIF)
-                        ListView(
-                          padding: const EdgeInsets.all(12),
-                          children: [
-                            ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.list, color: Colors.blueAccent),
-                              title: const Text('Semua Transaksi', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
-                              onTap: () {
-                                setState(() => _selectedAccountFilter = null);
-                                Navigator.pop(context);
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            const Text('Balance Sheet', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
-                            const Divider(color: Colors.white12),
-                            ...balanceSheetAccs.map((acc) => _buildTransactionDrawerItem(acc)),
-                            const SizedBox(height: 20),
-                            const Text('Incoming & Outgoing', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
-                            const Divider(color: Colors.white12),
-                            ...incomingOutgoingAccs.map((acc) => _buildTransactionDrawerItem(acc)),
-                          ],
-                        ),
-                        // TAB 2: ACCOUNTS
-                        Column(
-                          children: [
-                            ListTile(
-                              leading: const Icon(Icons.add, color: Colors.blueAccent),
-                              title: const Text('New account', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
-                              onTap: () {
-                                Navigator.pop(context);
-                                _showNewAccountDialog();
-                              },
-                            ),
-                            const Divider(color: Colors.white12),
-                            Expanded(
-                              child: _allAccounts.isEmpty
-                                  ? const Center(child: Text('Belum ada akun.', style: TextStyle(color: Colors.grey, fontSize: 11)))
-                                  : ListView.builder(
-                                      itemCount: _allAccounts.length,
-                                      itemBuilder: (ctx, i) {
-                                        final acc = _allAccounts[i];
-                                        return ListTile(
-                                          leading: Container(
-                                            width: 14,
-                                            height: 14,
-                                            decoration: BoxDecoration(
-                                              color: _getAccountColor(acc['type']),
-                                              borderRadius: BorderRadius.circular(3),
-                                            ),
-                                          ),
-                                          title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 14)),
-                                          trailing: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              IconButton(
-                                                icon: const Icon(Icons.edit, size: 18, color: Colors.grey),
-                                                onPressed: () {
-                                                  Navigator.pop(context);
-                                                  _showNewAccountDialog(editAcc: acc);
-                                                },
-                                              ),
-                                              IconButton(
-                                                icon: const Icon(Icons.delete, size: 18, color: Colors.redAccent),
-                                                onPressed: () {
-                                                  _deleteAccount(acc['id'], acc['name']);
-                                                  Navigator.pop(context);
-                                                },
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                      },
-                                    ),
-                            ),
-                          ],
-                        ),
-                      ],
                     ),
                   ),
                 ),
               ),
-              body: filteredList.isEmpty
-                  ? const Center(child: Text('Tidak ada transaksi', style: TextStyle(color: Colors.grey)))
-                  : ListView.builder(
-                      itemCount: filteredList.length,
-                      itemBuilder: (ctx, i) {
-                        final tx = filteredList[i];
-                        return Container(
-                          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
-                          child: ListTile(
-                            onTap: () => _showFormDialog(txEdit: tx),
-                            leading: const Icon(Icons.check_circle_outline, color: Colors.green),
-                            title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
-                            subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
-                            trailing: Text(
-                              'Rp ${tx['amount'].toStringAsFixed(0)}',
-                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
-                            ),
-                          ),
-                        );
-                      },
+              body: Column(
+                children: [
+                  // KOLOM SEARCH BAR SAMA SEPERTI BKPER
+                  Padding(
+                    padding: const EdgeInsets.all(10.0),
+                    child: TextField(
+                      onChanged: (val) => setState(() => _searchQuery = val),
+                      decoration: InputDecoration(
+                        hintText: 'Search transactions...',
+                        prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        filled: true,
+                        fillColor: const Color(0xFF1C1D24),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                      ),
                     ),
+                  ),
+                  Expanded(
+                    child: filteredList.isEmpty
+                        ? const Center(child: Text('Tidak ada transaksi', style: TextStyle(color: Colors.grey)))
+                        : ListView.builder(
+                            itemCount: filteredList.length,
+                            itemBuilder: (ctx, i) {
+                              final tx = filteredList[i];
+                              return Container(
+                                decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
+                                child: ListTile(
+                                  onTap: () => _showFormDialog(txEdit: tx),
+                                  leading: const Icon(Icons.check_circle_outline, color: Colors.green),
+                                  title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
+                                  subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
+                                  trailing: Text(
+                                    'Rp ${tx['amount'].toStringAsFixed(0)}',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
               floatingActionButton: FloatingActionButton(
                 backgroundColor: Colors.blueAccent,
                 onPressed: () => _showFormDialog(),
@@ -738,7 +803,7 @@ jobs:
           }
 
           Widget _buildTransactionDrawerItem(Map<String, dynamic> acc) {
-            double total = _getAccountTotal(acc);
+            double total = _getAccountTotalMonthly(acc);
             Color accColor = _getAccountColor(acc['type']);
 
             return Container(
