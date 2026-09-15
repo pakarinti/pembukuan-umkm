@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Akuntansi UMKM Sederhana
+        description: Aplikasi Bkper Style UMKM
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -43,6 +43,7 @@ jobs:
           cupertino_icons: ^1.0.6
           sqflite: ^2.3.0
           path: ^1.8.3
+          intl: ^0.19.0
 
         dev_dependencies:
           flutter_test:
@@ -57,139 +58,186 @@ jobs:
         import 'package:flutter/material.dart';
         import 'package:sqflite/sqflite.dart';
         import 'package:path/path.dart' as p;
+        import 'package:intl/intl.dart';
 
         void main() async {
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'umkm_full_acc.db'),
+            p.join(dbPath, 'bkper_style.db'),
             onCreate: (db, version) async {
               await db.execute('''
-                CREATE TABLE journal(
+                CREATE TABLE transactions(
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   date TEXT,
+                  account TEXT,
                   description TEXT,
-                  account_debit TEXT,
-                  account_credit TEXT,
-                  amount REAL
+                  amount REAL,
+                  type TEXT
                 )
               ''');
             },
             version: 1,
           );
-          runApp(UMKMApp(database: database));
+          runApp(BkperApp(database: database));
         }
 
-        class UMKMApp extends StatelessWidget {
+        class BkperApp extends StatelessWidget {
           final Database database;
-          const UMKMApp({super.key, required this.database});
+          const BkperApp({super.key, required this.database});
 
           @override
           Widget build(BuildContext context) {
             return MaterialApp(
               debugShowCheckedModeBanner: false,
-              title: 'Akuntansi UMKM Pro',
-              theme: ThemeData(primarySwatch: Colors.green, useMaterial3: true),
-              home: MainHomeScreen(database: database),
+              title: 'Bkper UMKM',
+              theme: ThemeData.dark().copyWith(
+                scaffoldBackgroundColor: const Color(0xFF121212),
+                primaryColor: const Color(0xFF1F1F1F),
+                colorScheme: const ColorScheme.dark(primary: Colors.blueAccent),
+              ),
+              home: HomeScreen(database: database),
             );
           }
         }
 
-        class MainHomeScreen extends StatefulWidget {
+        class HomeScreen extends StatefulWidget {
           final Database database;
-          const MainHomeScreen({super.key, required this.database});
+          const HomeScreen({super.key, required this.database});
 
           @override
-          State<MainHomeScreen> createState() => _MainHomeScreenState();
+          State<HomeScreen> createState() => _HomeScreenState();
         }
 
-        class _MainHomeScreenState extends State<MainHomeScreen> {
-          List<Map<String, dynamic>> _journals = [];
-          String _activeView = 'Jurnal Umum';
+        class _HomeScreenState extends State<HomeScreen> {
+          List<Map<String, dynamic>> _allTransactions = [];
+          String? _selectedAccountFilter;
+          DateTime _selectedTxDate = DateTime.now();
+
+          // Data Akun ala Bkper
+          final List<String> _balanceSheetAccounts = [
+            'Kas', 'Inventaris / Aset Tetap', 'Rekening Bank', 'Simpanan THR', 'Tabungan Ekspansi', 'Prive Pemilik', 'Utang Bank'
+          ];
+          final List<String> _incomeOutgoingAccounts = [
+            'Penjualan / Omset', 'Beban Bunga', 'Beban Pajak', 'Biaya Perawatan', 'Gaji Karyawan', 'Operasional / Bensin'
+          ];
 
           @override
           void initState() {
             super.initState();
-            _loadData();
+            _loadTransactions();
           }
 
-          Future<void> _loadData() async {
-            final data = await widget.database.query('journal', orderBy: 'id DESC');
+          Future<void> _loadTransactions() async {
+            final data = await widget.database.query('transactions', orderBy: 'date DESC, id DESC');
             setState(() {
-              _journals = data;
+              _allTransactions = data;
             });
           }
 
-          Future<void> _addTransaction(String type, String category, double amount, String desc) async {
-            String debit = '1111 - KAS';
-            String credit = '4111 - PENDAPATAN';
-
-            if (type == 'OUT') {
-              credit = '1111 - KAS';
-              if (category.contains('Bensin') || category.contains('Operasional')) {
-                debit = '5112 - BIAYA OPERASIONAL';
-              } else if (category.contains('Gaji')) {
-                debit = '5111 - BIAYA GAJI';
-              } else if (category.contains('Prive')) {
-                debit = '3112 - PRIVE PEMILIK';
-              } else {
-                debit = '5113 - PENGELUARAN LAIN';
-              }
-            } else {
-              if (category.contains('Modal')) {
-                credit = '3111 - MODAL USAHA';
+          double _getAccountTotal(String accName) {
+            double total = 0;
+            for (var tx in _allTransactions) {
+              if (tx['account'] == accName) {
+                total += (tx['amount'] as num).toDouble();
               }
             }
-
-            await widget.database.insert('journal', {
-              'date': DateTime.now().toString().split(' ')[0],
-              'description': desc.isEmpty ? category : desc,
-              'account_debit': debit,
-              'account_credit': credit,
-              'amount': amount,
-            });
-            _loadData();
+            return total;
           }
 
-          void _showForm(String type) {
-            final amountCtrl = TextEditingController();
+          Future<void> _addTransaction(String account, String desc, double amount, String type, DateTime date) async {
+            await widget.database.insert('transactions', {
+              'date': DateFormat('dd/MM/yyyy').format(date),
+              'account': account,
+              'description': desc,
+              'amount': amount,
+              'type': type,
+            });
+            _loadTransactions();
+          }
+
+          void _showFormDialog() {
             final descCtrl = TextEditingController();
-            List<String> categories = type == 'IN'
-                ? ['Omset / Penjualan', 'Modal Tambahan']
-                : ['Operasional / Bensin', 'Gaji Karyawan', 'Prive Pemilik', 'Pengeluaran Lain'];
-            String selectedCat = categories.first;
+            final amountCtrl = TextEditingController();
+            String selectedAcc = _incomeOutgoingAccounts.first;
+            String type = 'OUT';
+            DateTime pickerDate = _selectedTxDate;
 
             showModalBottomSheet(
               context: context,
               isScrollControlled: true,
-              builder: (ctx) => Padding(
-                padding: EdgeInsets.only(top: 16, left: 16, right: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(type == 'IN' ? 'Catat Uang Masuk' : 'Catat Uang Keluar', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: type == 'IN' ? Colors.green : Colors.red)),
-                    const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
-                      value: selectedCat,
-                      items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                      onChanged: (v) => selectedCat = v!,
-                      decoration: const InputDecoration(labelText: 'Kategori'),
-                    ),
-                    TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nominal (Rp)')),
-                    TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Keterangan')),
-                    const SizedBox(height: 15),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: type == 'IN' ? Colors.green : Colors.red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(45)),
-                      onPressed: () {
-                        final amt = double.tryParse(amountCtrl.text) ?? 0;
-                        if (amt > 0) {
-                          _addTransaction(type, selectedCat, amt, descCtrl.text);
-                          Navigator.pop(ctx);
-                        }
-                      },
-                      child: const Text('Simpan'),
-                    )
-                  ],
+              backgroundColor: const Color(0xFF1E1E1E),
+              builder: (ctx) => StatefulBuilder(
+                builder: (context, setModalState) => Padding(
+                  padding: EdgeInsets.only(top: 16, left: 16, right: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Tambah Transaksi', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                      const SizedBox(height: 10),
+                      // Pilihar Tanggal (Bisa Mundur / Bebas)
+                      ListTile(
+                        tileColor: Colors.black26,
+                        title: Text("Tanggal: ${DateFormat('dd/MM/yyyy').format(pickerDate)}"),
+                        trailing: const Icon(Icons.calendar_today, color: Colors.blueAccent),
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: pickerDate,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2030),
+                          );
+                          if (picked != null) {
+                            setModalState(() => pickerDate = picked);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: selectedAcc,
+                        dropdownColor: const Color(0xFF2C2C2C),
+                        items: [..._balanceSheetAccounts, ..._incomeOutgoingAccounts]
+                            .map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
+                        onChanged: (v) => selectedAcc = v!,
+                        decoration: const InputDecoration(labelText: 'Pilih Akun'),
+                      ),
+                      TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nominal (Rp)')),
+                      TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Keterangan')),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: RadioListTile<String>(
+                              title: const Text('Masuk (+)'),
+                              value: 'IN',
+                              groupValue: type,
+                              onChanged: (v) => setModalState(() => type = v!),
+                            ),
+                          ),
+                          Expanded(
+                            child: RadioListTile<String>(
+                              title: const Text('Keluar (-)'),
+                              value: 'OUT',
+                              groupValue: type,
+                              onChanged: (v) => setModalState(() => type = v!),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 15),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(45)),
+                        onPressed: () {
+                          final amt = double.tryParse(amountCtrl.text) ?? 0;
+                          if (amt > 0) {
+                            _addTransaction(selectedAcc, descCtrl.text, amt, type, pickerDate);
+                            Navigator.pop(ctx);
+                          }
+                        },
+                        child: const Text('Simpan Transaksi'),
+                      )
+                    ],
+                  ),
                 ),
               ),
             );
@@ -197,224 +245,109 @@ jobs:
 
           @override
           Widget build(BuildContext context) {
+            List<Map<String, dynamic>> filteredList = _selectedAccountFilter == null
+                ? _allTransactions
+                : _allTransactions.where((tx) => tx['account'] == _selectedAccountFilter).toList();
+
             return Scaffold(
               appBar: AppBar(
-                title: Text(_activeView),
-                backgroundColor: Colors.green.shade700,
-                foregroundColor: Colors.white,
-              ),
-              // DRAWER / MENU STRIP 3
-              drawer: Drawer(
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    UserAccountsDrawerHeader(
-                      accountName: const Text('Akuntansi UMKM Pro', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                      accountEmail: const Text('Pencatatan Otomatis & Laporan'),
-                      decoration: BoxDecoration(color: Colors.green.shade700),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.list_alt, color: Colors.green),
-                      title: const Text('Jurnal Umum'),
-                      onTap: () { setState(() => _activeView = 'Jurnal Umum'); Navigator.pop(context); },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.menu_book, color: Colors.green),
-                      title: const Text('Buku Besar (1111 - KAS)'),
-                      onTap: () { setState(() => _activeView = 'Buku Besar'); Navigator.pop(context); },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.bar_chart, color: Colors.green),
-                      title: const Text('Rugi Laba'),
-                      onTap: () { setState(() => _activeView = 'Rugi Laba'); Navigator.pop(context); },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.account_balance_wallet, color: Colors.green),
-                      title: const Text('Neraca'),
-                      onTap: () { setState(() => _activeView = 'Neraca'); Navigator.pop(context); },
-                    ),
-                  ],
-                ),
-              ),
-              body: _buildBodyView(),
-              floatingActionButton: _activeView == 'Jurnal Umum'
-                  ? Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        FloatingActionButton.extended(
-                          heroTag: 'in',
-                          onPressed: () => _showForm('IN'),
-                          label: const Text('Uang Masuk'),
-                          icon: const Icon(Icons.add),
-                          backgroundColor: Colors.green,
-                        ),
-                        const SizedBox(width: 10),
-                        FloatingActionButton.extended(
-                          heroTag: 'out',
-                          onPressed: () => _showForm('OUT'),
-                          label: const Text('Uang Keluar'),
-                          icon: const Icon(Icons.remove),
-                          backgroundColor: Colors.red,
-                        ),
-                      ],
+                title: Text(_selectedAccountFilter ?? 'All Transactions'),
+                backgroundColor: const Color(0xFF1F1F1F),
+                actions: [
+                  if (_selectedAccountFilter != null)
+                    IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () => setState(() => _selectedAccountFilter = null),
                     )
-                  : null,
-            );
-          }
-
-          Widget _buildBodyView() {
-            if (_activeView == 'Buku Besar') return _buildBukuBesar();
-            if (_activeView == 'Rugi Laba') return _buildRugiLaba();
-            if (_activeView == 'Neraca') return _buildNeraca();
-            return _buildJurnalUmum();
-          }
-
-          // VIEW JURNAL UMUM
-          Widget _buildJurnalUmum() {
-            return ListView.builder(
-              itemCount: _journals.length,
-              itemBuilder: (ctx, i) {
-                final item = _journals[i];
-                return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  child: ListTile(
-                    title: Text(item['description'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text('${item['date']}\nDb: ${item['account_debit']} | Kr: ${item['account_credit']}'),
-                    trailing: Text('Rp ${item['amount'].toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  ),
-                );
-              },
-            );
-          }
-
-          // VIEW BUKU BESAR (SEPERTI BKPER/AKUNTANSI PRO)
-          Widget _buildBukuBesar() {
-            double runningBalance = 0;
-            return Column(
-              children: [
-                Container(
-                  color: Colors.green.shade800,
-                  padding: const EdgeInsets.all(12),
-                  child: const Row(
-                    children: [
-                      Expanded(child: Text('TANGGAL / KET', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-                      Text('DEBIT / KREDIT', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _journals.length,
-                    itemBuilder: (ctx, i) {
-                      final item = _journals[i];
-                      bool isKasDebit = item['account_debit'].contains('1111');
-                      double debit = isKasDebit ? (item['amount'] as num).toDouble() : 0;
-                      double kredit = !isKasDebit ? (item['amount'] as num).toDouble() : 0;
-                      runningBalance += (debit - kredit);
-
-                      return Container(
-                        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300))),
-                        padding: const EdgeInsets.all(10),
-                        child: Row(
+                ],
+              ),
+              // DRAWER / SIDE MENU ALA BKPER
+              drawer: Drawer(
+                backgroundColor: const Color(0xFF181818),
+                child: DefaultTabController(
+                  length: 2,
+                  child: Scaffold(
+                    backgroundColor: Colors.transparent,
+                    appBar: AppBar(
+                      automaticallyImplyLeading: false,
+                      backgroundColor: const Color(0xFF222222),
+                      title: const TabBar(
+                        indicatorColor: Colors.blueAccent,
+                        tabs: [
+                          Tab(text: 'Transactions'),
+                          Tab(text: 'Accounts'),
+                        ],
+                      ),
+                    ),
+                    body: TabBarView(
+                      children: [
+                        // TAB 1: ALL TRANSACTIONS
+                        ListTile(
+                          leading: const Icon(Icons.list, color: Colors.blueAccent),
+                          title: const Text('Lihat Semua Transaksi'),
+                          onTap: () {
+                            setState(() => _selectedAccountFilter = null);
+                            Navigator.pop(context);
+                          },
+                        ),
+                        // TAB 2: ACCOUNTS (BALANCE SHEET & INCOMING/OUTGOING)
+                        ListView(
+                          padding: const EdgeInsets.all(12),
                           children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(item['date'], style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-                                  Text(item['description'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                if (debit > 0) Text('+ Rp ${debit.toStringAsFixed(0)}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                                if (kredit > 0) Text('- Rp ${kredit.toStringAsFixed(0)}', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                                Text('Saldo: Rp ${runningBalance.toStringAsFixed(0)}', style: const TextStyle(fontSize: 11, color: Colors.blueGrey)),
-                              ],
-                            )
+                            const Text('Balance Sheet', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                            const Divider(color: Colors.white24),
+                            ..._balanceSheetAccounts.map((acc) => _buildAccountItem(acc)),
+                            const SizedBox(height: 20),
+                            const Text('Incoming & Outgoing', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                            const Divider(color: Colors.white24),
+                            ..._incomeOutgoingAccounts.map((acc) => _buildAccountItem(acc)),
                           ],
                         ),
-                      );
-                    },
+                      ],
+                    ),
                   ),
                 ),
-              ],
-            );
-          }
-
-          // VIEW RUGI LABA
-          Widget _buildRugiLaba() {
-            double totalPendapatan = 0;
-            double totalBeban = 0;
-            for (var item in _journals) {
-              if (item['account_credit'].contains('4111')) totalPendapatan += item['amount'];
-              if (item['account_debit'].contains('511')) totalBeban += item['amount'];
-            }
-            double labaRugi = totalPendapatan - totalBeban;
-
-            return Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Card(
-                    child: ListTile(
-                      title: const Text('TOTAL PEMASUKAN / PENDAPATAN'),
-                      trailing: Text('Rp ${totalPendapatan.toStringAsFixed(0)}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+              ),
+              body: filteredList.isEmpty
+                  ? const Center(child: Text('Tidak ada transaksi', style: TextStyle(color: Colors.grey)))
+                  : ListView.builder(
+                      itemCount: filteredList.length,
+                      itemBuilder: (ctx, i) {
+                        final tx = filteredList[i];
+                        bool isInc = tx['type'] == 'IN';
+                        return Container(
+                          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
+                          child: ListTile(
+                            leading: Icon(isInc ? Icons.check_circle_outline : Icons.remove_circle_outline, color: isInc ? Colors.green : Colors.red),
+                            title: Text(tx['description'].isEmpty ? tx['account'] : tx['description']),
+                            subtitle: Text('${tx['date']} • ${tx['account']}'),
+                            trailing: Text(
+                              'Rp ${tx['amount'].toStringAsFixed(0)}',
+                              style: TextStyle(fontWeight: FontWeight.bold, color: isInc ? Colors.green : Colors.red),
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                  ),
-                  Card(
-                    child: ListTile(
-                      title: const Text('TOTAL PENGELUARAN / BEBAN'),
-                      trailing: Text('Rp ${totalBeban.toStringAsFixed(0)}', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const Divider(thickness: 2),
-                  Card(
-                    color: labaRugi >= 0 ? Colors.green.shade50 : Colors.red.shade50,
-                    child: ListTile(
-                      title: Text(labaRugi >= 0 ? 'LABA BERSIH' : 'RUGI BERSIH', style: const TextStyle(fontWeight: FontWeight.bold)),
-                      trailing: Text('Rp ${labaRugi.toStringAsFixed(0)}', style: TextStyle(color: labaRugi >= 0 ? Colors.green : Colors.red, fontWeight: FontWeight.bold, fontSize: 18)),
-                    ),
-                  )
-                ],
+              floatingActionButton: FloatingActionButton(
+                backgroundColor: Colors.blueAccent,
+                onPressed: _showFormDialog,
+                child: const Icon(Icons.add, color: Colors.white),
               ),
             );
           }
 
-          // VIEW NERACA
-          Widget _buildNeraca() {
-            double kas = 0;
-            double modal = 0;
-            for (var item in _journals) {
-              if (item['account_debit'].contains('1111')) kas += item['amount'];
-              if (item['account_credit'].contains('1111')) kas -= item['amount'];
-              if (item['account_credit'].contains('3111')) modal += item['amount'];
-            }
-
-            return Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('AKTIVA (Aset)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
-                  Card(
-                    child: ListTile(
-                      title: const Text('1111 - KAS'),
-                      trailing: Text('Rp ${kas.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('PASIVA (Kewajiban & Modal)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green)),
-                  Card(
-                    child: ListTile(
-                      title: const Text('3111 - MODAL USAHA'),
-                      trailing: Text('Rp ${modal.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
+          Widget _buildAccountItem(String accName) {
+            double total = _getAccountTotal(accName);
+            return ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(accName, style: const TextStyle(color: Colors.white)),
+              trailing: Text('Rp ${total.toStringAsFixed(0)}', style: const TextStyle(color: Colors.blueAccent)),
+              onTap: () {
+                setState(() => _selectedAccountFilter = accName);
+                Navigator.pop(context);
+              },
             );
           }
         }
