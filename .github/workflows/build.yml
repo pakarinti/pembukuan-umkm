@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Edit & Delete Transaction
+        description: Aplikasi Bkper Visual & Book Management Fix
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_tx_edit.db'),
+            p.join(dbPath, 'bkper_visual_fix.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -92,7 +92,8 @@ jobs:
                 )
               ''');
 
-              await db.insert('books', {'name': 'Hotel Mulyo Agung'});
+              // Default Book Name: Bisnis Anda
+              await db.insert('books', {'name': 'Bisnis Anda'});
             },
             version: 1,
           );
@@ -187,13 +188,29 @@ jobs:
             } catch (e) {}
           }
 
-          double _getAccountTotal(String accName) {
+          Future<void> _updateBook(int id, String name) async {
+            await widget.database.update('books', {'name': name}, where: 'id = ?', whereArgs: [id]);
+            _loadBooks();
+          }
+
+          Future<void> _deleteBook(int id) async {
+            if (_books.length <= 1) return; // Mencegah hapus jika tinggal 1 buku
+            await widget.database.delete('books', where: 'id = ?', whereArgs: [id]);
+            await widget.database.delete('accounts', where: 'book_id = ?', whereArgs: [id]);
+            await widget.database.delete('transactions', where: 'book_id = ?', whereArgs: [id]);
+            _loadBooks();
+          }
+
+          double _getAccountTotal(Map<String, dynamic> acc) {
+            String accName = acc['name'];
+            String accType = acc['type'];
             double total = 0;
+
             for (var tx in _allTransactions) {
               if (tx['to_account'] == accName) {
                 total += (tx['amount'] as num).toDouble();
               } else if (tx['from_account'] == accName) {
-                total -= (tx['amount'] as num).toDouble();
+                total += (accType == 'Incoming') ? (tx['amount'] as num).toDouble() : -(tx['amount'] as num).toDouble();
               }
             }
             return total;
@@ -259,21 +276,21 @@ jobs:
 
           Color _getAccountColor(String type) {
             switch (type) {
-              case 'Asset': return Colors.blue;
-              case 'Liability': return Colors.amber;
-              case 'Incoming': return Colors.green;
-              case 'Outgoing': return Colors.redAccent;
+              case 'Asset': return const Color(0xFF2196F3);
+              case 'Liability': return const Color(0xFFFFC107);
+              case 'Incoming': return const Color(0xFF4CAF50);
+              case 'Outgoing': return const Color(0xFFF44336);
               default: return Colors.grey;
             }
           }
 
-          void _showCreateBookDialog() {
-            final bookCtrl = TextEditingController();
+          void _showBookDialog({Map<String, dynamic>? bookEdit}) {
+            final bookCtrl = TextEditingController(text: bookEdit != null ? bookEdit['name'] : '');
             showDialog(
               context: context,
               builder: (ctx) => AlertDialog(
                 backgroundColor: const Color(0xFF1E1E26),
-                title: const Text('Create New Book'),
+                title: Text(bookEdit == null ? 'Create New Book' : 'Edit Book Name'),
                 content: TextField(controller: bookCtrl, decoration: const InputDecoration(labelText: 'Book / Business Name')),
                 actions: [
                   TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -281,11 +298,15 @@ jobs:
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
                     onPressed: () {
                       if (bookCtrl.text.isNotEmpty) {
-                        _createBook(bookCtrl.text);
+                        if (bookEdit == null) {
+                          _createBook(bookCtrl.text);
+                        } else {
+                          _updateBook(bookEdit['id'], bookCtrl.text);
+                        }
                         Navigator.pop(ctx);
                       }
                     },
-                    child: const Text('Create'),
+                    child: Text(bookEdit == null ? 'Create' : 'Save'),
                   )
                 ],
               ),
@@ -339,7 +360,6 @@ jobs:
             );
           }
 
-          // FORM TRANSAKSI (BISA UNTUK CREATE ATAU EDIT / DELETE)
           void _showFormDialog({Map<String, dynamic>? txEdit}) {
             final descCtrl = TextEditingController(text: txEdit != null ? txEdit['description'] : '');
             final amountCtrl = TextEditingController(text: txEdit != null ? txEdit['amount'].toString() : '');
@@ -461,7 +481,6 @@ jobs:
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            // IKON SAMPAH UNTUK EDIT TRANSACTION
                             txEdit != null
                                 ? IconButton(
                                     icon: const Icon(Icons.delete_outline, color: Colors.grey),
@@ -528,8 +547,8 @@ jobs:
                   ),
                   onSelected: (val) {
                     if (val == 'CREATE_NEW') {
-                      _showCreateBookDialog();
-                    } else {
+                      _showBookDialog();
+                    } else if (val is Map && val.containsKey('id')) {
                       setState(() {
                         _currentBookId = val['id'];
                         _currentBookName = val['name'];
@@ -538,7 +557,34 @@ jobs:
                     }
                   },
                   itemBuilder: (ctx) => [
-                    ..._books.map((b) => PopupMenuItem(value: b, child: Text(b['name']))),
+                    ..._books.map((b) => PopupMenuItem(
+                          value: b,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(b['name'], style: TextStyle(fontWeight: b['id'] == _currentBookId ? FontWeight.bold : FontWeight.normal)),
+                              Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, size: 16, color: Colors.grey),
+                                    onPressed: () {
+                                      Navigator.pop(ctx);
+                                      _showBookDialog(bookEdit: b);
+                                    },
+                                  ),
+                                  if (_books.length > 1)
+                                    IconButton(
+                                      icon: const Icon(Icons.delete, size: 16, color: Colors.redAccent),
+                                      onPressed: () {
+                                        Navigator.pop(ctx);
+                                        _deleteBook(b['id']);
+                                      },
+                                    ),
+                                ],
+                              )
+                            ],
+                          ),
+                        )),
                     const PopupMenuDivider(),
                     const PopupMenuItem(
                       value: 'CREATE_NEW',
@@ -579,6 +625,7 @@ jobs:
                     ),
                     body: TabBarView(
                       children: [
+                        // TAB 1: TRANSACTIONS (DENGAN GARIS WARNA TIPE AKUN DIPINGGIR KIRI & SALDO POSITIF)
                         ListView(
                           padding: const EdgeInsets.all(12),
                           children: [
@@ -602,6 +649,7 @@ jobs:
                             ...incomingOutgoingAccs.map((acc) => _buildTransactionDrawerItem(acc)),
                           ],
                         ),
+                        // TAB 2: ACCOUNTS
                         Column(
                           children: [
                             ListTile(
@@ -669,7 +717,7 @@ jobs:
                         return Container(
                           decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
                           child: ListTile(
-                            onTap: () => _showFormDialog(txEdit: tx), // KLIK UNTUK EDIT / DELETE TRANSAKSI
+                            onTap: () => _showFormDialog(txEdit: tx),
                             leading: const Icon(Icons.check_circle_outline, color: Colors.green),
                             title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
                             subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
@@ -690,19 +738,27 @@ jobs:
           }
 
           Widget _buildTransactionDrawerItem(Map<String, dynamic> acc) {
-            double total = _getAccountTotal(acc['name']);
-            return ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 13)),
-              trailing: Text(
-                'Rp ${total.toStringAsFixed(0)}',
-                style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 13),
+            double total = _getAccountTotal(acc);
+            Color accColor = _getAccountColor(acc['type']);
+
+            return Container(
+              margin: const EdgeInsets.symmetric(vertical: 2),
+              decoration: BoxDecoration(
+                border: Border(left: BorderSide(color: accColor, width: 4)),
               ),
-              onTap: () {
-                setState(() => _selectedAccountFilter = acc['name']);
-                Navigator.pop(context);
-              },
+              child: ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.only(left: 8),
+                title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 13)),
+                trailing: Text(
+                  'Rp ${total.toStringAsFixed(0)}',
+                  style: TextStyle(color: accColor, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                onTap: () {
+                  setState(() => _selectedAccountFilter = acc['name']);
+                  Navigator.pop(context);
+                },
+              ),
             );
           }
         }
