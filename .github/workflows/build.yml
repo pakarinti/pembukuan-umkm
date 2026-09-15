@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Dynamic Accounts
+        description: Aplikasi Bkper Multi Book & Manage Accounts
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,18 +64,26 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_clean_dynamic.db'),
+            p.join(dbPath, 'bkper_multibook.db'),
             onCreate: (db, version) async {
+              await db.execute('''
+                CREATE TABLE books(
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT UNIQUE
+                )
+              ''');
               await db.execute('''
                 CREATE TABLE accounts(
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  name TEXT UNIQUE,
+                  book_id INTEGER,
+                  name TEXT,
                   type TEXT
                 )
               ''');
               await db.execute('''
                 CREATE TABLE transactions(
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  book_id INTEGER,
                   date TEXT,
                   account TEXT,
                   description TEXT,
@@ -83,6 +91,9 @@ jobs:
                   type TEXT
                 )
               ''');
+
+              // Buku Bawaan Pertama
+              await db.insert('books', {'name': 'Hotel Mulyo Agung'});
             },
             version: 1,
           );
@@ -117,6 +128,10 @@ jobs:
         }
 
         class _HomeScreenState extends State<HomeScreen> {
+          List<Map<String, dynamic>> _books = [];
+          int? _currentBookId;
+          String _currentBookName = '';
+
           List<Map<String, dynamic>> _allTransactions = [];
           List<Map<String, dynamic>> _allAccounts = [];
           String? _selectedAccountFilter;
@@ -124,16 +139,53 @@ jobs:
           @override
           void initState() {
             super.initState();
-            _loadData();
+            _loadBooks();
           }
 
-          Future<void> _loadData() async {
-            final txData = await widget.database.query('transactions', orderBy: 'date DESC, id DESC');
-            final accData = await widget.database.query('accounts', orderBy: 'id ASC');
+          Future<void> _loadBooks() async {
+            final bData = await widget.database.query('books', orderBy: 'id ASC');
+            if (bData.isNotEmpty) {
+              setState(() {
+                _books = bData;
+                _currentBookId = bData.first['id'] as int;
+                _currentBookName = bData.first['name'] as String;
+              });
+              _loadDataForCurrentBook();
+            }
+          }
+
+          Future<void> _loadDataForCurrentBook() async {
+            if (_currentBookId == null) return;
+            final txData = await widget.database.query(
+              'transactions',
+              where: 'book_id = ?',
+              whereArgs: [_currentBookId],
+              orderBy: 'date DESC, id DESC',
+            );
+            final accData = await widget.database.query(
+              'accounts',
+              where: 'book_id = ?',
+              whereArgs: [_currentBookId],
+              orderBy: 'id ASC',
+            );
             setState(() {
               _allTransactions = txData;
               _allAccounts = accData;
+              _selectedAccountFilter = null;
             });
+          }
+
+          Future<void> _createBook(String name) async {
+            try {
+              final id = await widget.database.insert('books', {'name': name});
+              final bData = await widget.database.query('books');
+              setState(() {
+                _books = bData;
+                _currentBookId = id;
+                _currentBookName = name;
+              });
+              _loadDataForCurrentBook();
+            } catch (e) {}
           }
 
           double _getAccountTotal(String accName) {
@@ -147,21 +199,40 @@ jobs:
           }
 
           Future<void> _addAccount(String name, String type) async {
-            try {
-              await widget.database.insert('accounts', {'name': name, 'type': type});
-              _loadData();
-            } catch (e) {}
+            await widget.database.insert('accounts', {
+              'book_id': _currentBookId,
+              'name': name,
+              'type': type,
+            });
+            _loadDataForCurrentBook();
+          }
+
+          Future<void> _updateAccount(int id, String name, String type) async {
+            await widget.database.update(
+              'accounts',
+              {'name': name, 'type': type},
+              where: 'id = ?',
+              whereArgs: [id],
+            );
+            _loadDataForCurrentBook();
+          }
+
+          Future<void> _deleteAccount(int id, String name) async {
+            await widget.database.delete('accounts', where: 'id = ?', whereArgs: [id]);
+            await widget.database.delete('transactions', where: 'book_id = ? AND account = ?', whereArgs: [_currentBookId, name]);
+            _loadDataForCurrentBook();
           }
 
           Future<void> _addTransaction(String account, String desc, double amount, String type, DateTime date) async {
             await widget.database.insert('transactions', {
+              'book_id': _currentBookId,
               'date': DateFormat('dd/MM/yyyy').format(date),
               'account': account,
               'description': desc,
               'amount': amount,
               'type': type,
             });
-            _loadData();
+            _loadDataForCurrentBook();
           }
 
           Color _getAccountColor(String type) {
@@ -174,16 +245,43 @@ jobs:
             }
           }
 
-          void _showNewAccountDialog() {
-            final nameCtrl = TextEditingController();
-            String selectedType = 'Outgoing';
+          // DIALOG CREATE NEW BOOK
+          void _showCreateBookDialog() {
+            final bookCtrl = TextEditingController();
+            showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                backgroundColor: const Color(0xFF1E1E26),
+                title: const Text('Create New Book'),
+                content: TextField(controller: bookCtrl, decoration: const InputDecoration(labelText: 'Book / Business Name')),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                    onPressed: () {
+                      if (bookCtrl.text.isNotEmpty) {
+                        _createBook(bookCtrl.text);
+                        Navigator.pop(ctx);
+                      }
+                    },
+                    child: const Text('Create'),
+                  )
+                ],
+              ),
+            );
+          }
+
+          // DIALOG NEW ACCOUNT (DENGAN TOMBOL "CREATE")
+          void _showNewAccountDialog({Map<String, dynamic>? editAcc}) {
+            final nameCtrl = TextEditingController(text: editAcc != null ? editAcc['name'] : '');
+            String selectedType = editAcc != null ? editAcc['type'] : 'Outgoing';
 
             showDialog(
               context: context,
               builder: (ctx) => StatefulBuilder(
                 builder: (context, setDlgState) => AlertDialog(
                   backgroundColor: const Color(0xFF1E1E26),
-                  title: const Text('New Account'),
+                  title: Text(editAcc == null ? 'New Account' : 'Edit Account'),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -205,11 +303,15 @@ jobs:
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
                       onPressed: () {
                         if (nameCtrl.text.isNotEmpty) {
-                          _addAccount(nameCtrl.text, selectedType);
+                          if (editAcc == null) {
+                            _addAccount(nameCtrl.text, selectedType);
+                          } else {
+                            _updateAccount(editAcc['id'], nameCtrl.text, selectedType);
+                          }
                           Navigator.pop(ctx);
                         }
                       },
-                      child: const Text('Save'),
+                      child: Text(editAcc == null ? 'Create' : 'Save'),
                     ),
                   ],
                 ),
@@ -220,7 +322,7 @@ jobs:
           void _showFormDialog() {
             final descCtrl = TextEditingController();
             final amountCtrl = TextEditingController();
-            String type = 'IN'; // Default ke Masuk (+)
+            String type = 'IN';
             DateTime pickerDate = DateTime.now();
 
             showModalBottomSheet(
@@ -229,7 +331,6 @@ jobs:
               backgroundColor: const Color(0xFF1E1E26),
               builder: (ctx) => StatefulBuilder(
                 builder: (context, setModalState) {
-                  // FILTER AKUN BERDASARKAN TIPE MASUK / KELUAR
                   List<String> availableAccounts = [];
                   if (type == 'IN') {
                     availableAccounts = _allAccounts
@@ -274,11 +375,7 @@ jobs:
                                 title: const Text('Masuk (+)'),
                                 value: 'IN',
                                 groupValue: type,
-                                onChanged: (v) {
-                                  setModalState(() {
-                                    type = v!;
-                                  });
-                                },
+                                onChanged: (v) => setModalState(() => type = v!),
                               ),
                             ),
                             Expanded(
@@ -286,11 +383,7 @@ jobs:
                                 title: const Text('Keluar (-)'),
                                 value: 'OUT',
                                 groupValue: type,
-                                onChanged: (v) {
-                                  setModalState(() {
-                                    type = v!;
-                                  });
-                                },
+                                onChanged: (v) => setModalState(() => type = v!),
                               ),
                             ),
                           ],
@@ -341,8 +434,42 @@ jobs:
 
             return Scaffold(
               appBar: AppBar(
-                title: Text(_selectedAccountFilter ?? 'All Transactions'),
                 backgroundColor: const Color(0xFF1C1D24),
+                // DROPDOWN MULTI-BOOK
+                title: PopupMenuButton<dynamic>(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_currentBookName.isEmpty ? 'Pilih Buku' : _currentBookName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
+                  ),
+                  onSelected: (val) {
+                    if (val == 'CREATE_NEW') {
+                      _showCreateBookDialog();
+                    } else {
+                      setState(() {
+                        _currentBookId = val['id'];
+                        _currentBookName = val['name'];
+                      });
+                      _loadDataForCurrentBook();
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    ..._books.map((b) => PopupMenuItem(value: b, child: Text(b['name']))),
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(
+                      value: 'CREATE_NEW',
+                      child: Row(
+                        children: [
+                          Icon(Icons.add, color: Colors.blueAccent, size: 20),
+                          SizedBox(width: 8),
+                          Text('Create New Book', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
                 actions: [
                   if (_selectedAccountFilter != null)
                     IconButton(
@@ -406,7 +533,7 @@ jobs:
                             const Divider(color: Colors.white12),
                             Expanded(
                               child: _allAccounts.isEmpty
-                                  ? const Center(child: Text('Belum ada akun. Klik + New account untuk membuat.', style: TextStyle(color: Colors.grey, fontSize: 11), textAlign: TextAlign.center))
+                                  ? const Center(child: Text('Belum ada akun.', style: TextStyle(color: Colors.grey, fontSize: 11)))
                                   : ListView.builder(
                                       itemCount: _allAccounts.length,
                                       itemBuilder: (ctx, i) {
@@ -421,6 +548,25 @@ jobs:
                                             ),
                                           ),
                                           title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                          trailing: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              IconButton(
+                                                icon: const Icon(Icons.edit, size: 18, color: Colors.grey),
+                                                onPressed: () {
+                                                  Navigator.pop(context);
+                                                  _showNewAccountDialog(editAcc: acc);
+                                                },
+                                              ),
+                                              IconButton(
+                                                icon: const Icon(Icons.delete, size: 18, color: Colors.redAccent),
+                                                onPressed: () {
+                                                  _deleteAccount(acc['id'], acc['name']);
+                                                  Navigator.pop(context);
+                                                },
+                                              ),
+                                            ],
+                                          ),
                                         );
                                       },
                                     ),
