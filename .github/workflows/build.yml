@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Search & Monthly Period Fix
+        description: Aplikasi Bkper Fixed Category Group Order
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_final_v2.db'),
+            p.join(dbPath, 'bkper_group_order.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -545,8 +545,16 @@ jobs:
               return matchFilter && matchSearch;
             }).toList();
 
-            final balanceSheetAccs = _allAccounts.where((a) => a['type'] == 'Asset' || a['type'] == 'Liability').toList();
-            final incomingOutgoingAccs = _allAccounts.where((a) => a['type'] == 'Incoming' || a['type'] == 'Outgoing').toList();
+            // PENGELOMPOKAN URUTAN PERSIS BKPER:
+            // Balance Sheet: ASSET dulu baru LIABILITY
+            final assetAccs = _allAccounts.where((a) => a['type'] == 'Asset').toList();
+            final liabilityAccs = _allAccounts.where((a) => a['type'] == 'Liability').toList();
+            final balanceSheetAccs = [...assetAccs, ...liabilityAccs];
+
+            // Incoming & Outgoing: INCOMING dulu baru OUTGOING
+            final incomingAccs = _allAccounts.where((a) => a['type'] == 'Incoming').toList();
+            final outgoingAccs = _allAccounts.where((a) => a['type'] == 'Outgoing').toList();
+            final incomingOutgoingAccs = [...incomingAccs, ...outgoingAccs];
 
             return Scaffold(
               appBar: AppBar(
@@ -640,11 +648,9 @@ jobs:
                       ),
                       body: TabBarView(
                         children: [
-                          // TAB 1: TRANSACTIONS (DENGAN PEMILIH BULANAN ALA BKPER)
                           ListView(
                             padding: const EdgeInsets.all(12),
                             children: [
-                              // PENULISAN PERIODE BULANAN
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -692,7 +698,6 @@ jobs:
                               ...incomingOutgoingAccs.map((acc) => _buildTransactionDrawerItem(acc)),
                             ],
                           ),
-                          // TAB 2: ACCOUNTS
                           Column(
                             children: [
                               ListTile(
@@ -754,7 +759,6 @@ jobs:
               ),
               body: Column(
                 children: [
-                  // KOLOM SEARCH BAR SAMA SEPERTI BKPER
                   Padding(
                     padding: const EdgeInsets.all(10.0),
                     child: TextField(
