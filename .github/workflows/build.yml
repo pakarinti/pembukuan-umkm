@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Exact Form Structure
+        description: Aplikasi Bkper Edit & Delete Transaction
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_exact_form.db'),
+            p.join(dbPath, 'bkper_tx_edit.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -236,6 +236,27 @@ jobs:
             _loadDataForCurrentBook();
           }
 
+          Future<void> _updateTransaction(int id, String fromAcc, String toAcc, String desc, double amount, DateTime date) async {
+            await widget.database.update(
+              'transactions',
+              {
+                'date': DateFormat('dd/MM/yyyy').format(date),
+                'from_account': fromAcc,
+                'to_account': toAcc,
+                'description': desc,
+                'amount': amount,
+              },
+              where: 'id = ?',
+              whereArgs: [id],
+            );
+            _loadDataForCurrentBook();
+          }
+
+          Future<void> _deleteTransaction(int id) async {
+            await widget.database.delete('transactions', where: 'id = ?', whereArgs: [id]);
+            _loadDataForCurrentBook();
+          }
+
           Color _getAccountColor(String type) {
             switch (type) {
               case 'Asset': return Colors.blue;
@@ -318,15 +339,15 @@ jobs:
             );
           }
 
-          // FORM FORMULIR TRANSAKSI EXACT REPLICA BKPER (FROM ACCOUNT -> TO ACCOUNT)
-          void _showFormDialog() {
-            final descCtrl = TextEditingController();
-            final amountCtrl = TextEditingController();
-            DateTime pickerDate = DateTime.now();
+          // FORM TRANSAKSI (BISA UNTUK CREATE ATAU EDIT / DELETE)
+          void _showFormDialog({Map<String, dynamic>? txEdit}) {
+            final descCtrl = TextEditingController(text: txEdit != null ? txEdit['description'] : '');
+            final amountCtrl = TextEditingController(text: txEdit != null ? txEdit['amount'].toString() : '');
+            DateTime pickerDate = txEdit != null ? DateFormat('dd/MM/yyyy').parse(txEdit['date']) : DateTime.now();
 
             List<String> accNames = _allAccounts.map((a) => a['name'] as String).toList();
-            String? fromAcc = accNames.isNotEmpty ? accNames.first : null;
-            String? toAcc = accNames.length > 1 ? accNames[1] : (accNames.isNotEmpty ? accNames.first : null);
+            String? fromAcc = txEdit != null ? txEdit['from_account'] : (accNames.isNotEmpty ? accNames.first : null);
+            String? toAcc = txEdit != null ? txEdit['to_account'] : (accNames.length > 1 ? accNames[1] : (accNames.isNotEmpty ? accNames.first : null));
 
             showModalBottomSheet(
               context: context,
@@ -340,7 +361,7 @@ jobs:
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('New transaction', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                        Text(txEdit == null ? 'New transaction' : 'Transaction', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
                         const SizedBox(height: 15),
                         Row(
                           children: [
@@ -402,7 +423,7 @@ jobs:
                         accNames.isEmpty
                             ? const Text('Belum ada akun.', style: TextStyle(color: Colors.amber, fontSize: 12))
                             : DropdownButtonFormField<String>(
-                                value: fromAcc,
+                                value: accNames.contains(fromAcc) ? fromAcc : null,
                                 dropdownColor: const Color(0xFF2C2D38),
                                 items: accNames.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
                                 onChanged: (v) => setModalState(() => fromAcc = v),
@@ -417,7 +438,7 @@ jobs:
                         accNames.isEmpty
                             ? const SizedBox()
                             : DropdownButtonFormField<String>(
-                                value: toAcc,
+                                value: accNames.contains(toAcc) ? toAcc : null,
                                 dropdownColor: const Color(0xFF2C2D38),
                                 items: accNames.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
                                 onChanged: (v) => setModalState(() => toAcc = v),
@@ -438,24 +459,42 @@ jobs:
                         ),
                         const SizedBox(height: 20),
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            OutlinedButton(
-                              onPressed: () => Navigator.pop(ctx),
-                              style: OutlinedButton.styleFrom(foregroundColor: Colors.grey),
-                              child: const Text('Close'),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
-                              onPressed: () {
-                                final amt = double.tryParse(amountCtrl.text) ?? 0;
-                                if (amt > 0 && fromAcc != null && toAcc != null) {
-                                  _addTransaction(fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
-                                  Navigator.pop(ctx);
-                                }
-                              },
-                              child: const Text('Post'),
+                            // IKON SAMPAH UNTUK EDIT TRANSACTION
+                            txEdit != null
+                                ? IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.grey),
+                                    onPressed: () {
+                                      _deleteTransaction(txEdit['id']);
+                                      Navigator.pop(ctx);
+                                    },
+                                  )
+                                : const SizedBox(),
+                            Row(
+                              children: [
+                                OutlinedButton(
+                                  onPressed: () => Navigator.pop(ctx),
+                                  style: OutlinedButton.styleFrom(foregroundColor: Colors.grey),
+                                  child: const Text('Close'),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
+                                  onPressed: () {
+                                    final amt = double.tryParse(amountCtrl.text) ?? 0;
+                                    if (amt > 0 && fromAcc != null && toAcc != null) {
+                                      if (txEdit == null) {
+                                        _addTransaction(fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
+                                      } else {
+                                        _updateTransaction(txEdit['id'], fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
+                                      }
+                                      Navigator.pop(ctx);
+                                    }
+                                  },
+                                  child: Text(txEdit == null ? 'Post' : 'Save'),
+                                ),
+                              ],
                             ),
                           ],
                         )
@@ -630,6 +669,7 @@ jobs:
                         return Container(
                           decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
                           child: ListTile(
+                            onTap: () => _showFormDialog(txEdit: tx), // KLIK UNTUK EDIT / DELETE TRANSAKSI
                             leading: const Icon(Icons.check_circle_outline, color: Colors.green),
                             title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
                             subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
@@ -643,7 +683,7 @@ jobs:
                     ),
               floatingActionButton: FloatingActionButton(
                 backgroundColor: Colors.blueAccent,
-                onPressed: _showFormDialog,
+                onPressed: () => _showFormDialog(),
                 child: const Icon(Icons.add, color: Colors.white),
               ),
             );
