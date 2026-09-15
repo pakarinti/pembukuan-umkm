@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Style UMKM
+        description: Aplikasi Bkper Style Custom Accounts
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,8 +64,15 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_style.db'),
+            p.join(dbPath, 'bkper_custom.db'),
             onCreate: (db, version) async {
+              await db.execute('''
+                CREATE TABLE accounts(
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT UNIQUE,
+                  type TEXT
+                )
+              ''');
               await db.execute('''
                 CREATE TABLE transactions(
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,6 +83,15 @@ jobs:
                   type TEXT
                 )
               ''');
+
+              // Akun Bawaan Awal
+              await db.insert('accounts', {'name': 'Kas', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Rekening Bank', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Utang Bank', 'type': 'Liability'});
+              await db.insert('accounts', {'name': 'Penjualan / Omset', 'type': 'Incoming'});
+              await db.insert('accounts', {'name': 'Operasional / Bensin', 'type': 'Outgoing'});
+              await db.insert('accounts', {'name': 'Gaji Karyawan', 'type': 'Outgoing'});
+              await db.insert('accounts', {'name': 'Prive Rumah Tangga', 'type': 'Outgoing'});
             },
             version: 1,
           );
@@ -111,27 +127,21 @@ jobs:
 
         class _HomeScreenState extends State<HomeScreen> {
           List<Map<String, dynamic>> _allTransactions = [];
+          List<Map<String, dynamic>> _allAccounts = [];
           String? _selectedAccountFilter;
-          DateTime _selectedTxDate = DateTime.now();
-
-          // Data Akun ala Bkper
-          final List<String> _balanceSheetAccounts = [
-            'Kas', 'Inventaris / Aset Tetap', 'Rekening Bank', 'Simpanan THR', 'Tabungan Ekspansi', 'Prive Pemilik', 'Utang Bank'
-          ];
-          final List<String> _incomeOutgoingAccounts = [
-            'Penjualan / Omset', 'Beban Bunga', 'Beban Pajak', 'Biaya Perawatan', 'Gaji Karyawan', 'Operasional / Bensin'
-          ];
 
           @override
           void initState() {
             super.initState();
-            _loadTransactions();
+            _loadData();
           }
 
-          Future<void> _loadTransactions() async {
-            final data = await widget.database.query('transactions', orderBy: 'date DESC, id DESC');
+          Future<void> _loadData() async {
+            final txData = await widget.database.query('transactions', orderBy: 'date DESC, id DESC');
+            final accData = await widget.database.query('accounts', orderBy: 'name ASC');
             setState(() {
-              _allTransactions = data;
+              _allTransactions = txData;
+              _allAccounts = accData;
             });
           }
 
@@ -145,6 +155,15 @@ jobs:
             return total;
           }
 
+          Future<void> _addAccount(String name, String type) async {
+            try {
+              await widget.database.insert('accounts', {'name': name, 'type': type});
+              _loadData();
+            } catch (e) {
+              // Abaikan jika duplikat
+            }
+          }
+
           Future<void> _addTransaction(String account, String desc, double amount, String type, DateTime date) async {
             await widget.database.insert('transactions', {
               'date': DateFormat('dd/MM/yyyy').format(date),
@@ -153,92 +172,168 @@ jobs:
               'amount': amount,
               'type': type,
             });
-            _loadTransactions();
+            _loadData();
           }
 
+          // Dialog Tambah Akun Baru (Custom Account)
+          void _showNewAccountDialog() {
+            final nameCtrl = TextEditingController();
+            String selectedType = 'Outgoing';
+
+            showDialog(
+              context: context,
+              builder: (ctx) => StatefulBuilder(
+                builder: (context, setDlgState) => AlertDialog(
+                  backgroundColor: const Color(0xFF1E1E1E),
+                  title: const Text('New Account'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(labelText: 'Name'),
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: selectedType,
+                        dropdownColor: const Color(0xFF2C2C2C),
+                        items: ['Asset', 'Liability', 'Incoming', 'Outgoing']
+                            .map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                        onChanged: (v) => setDlgState(() => selectedType = v!),
+                        decoration: const InputDecoration(labelText: 'Type'),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                      onPressed: () {
+                        if (nameCtrl.text.isNotEmpty) {
+                          _addAccount(nameCtrl.text, selectedType);
+                          Navigator.pop(ctx);
+                        }
+                      },
+                      child: const Text('Save'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          // Dialog Tambah Transaksi (Smart Dynamic Accounts)
           void _showFormDialog() {
             final descCtrl = TextEditingController();
             final amountCtrl = TextEditingController();
-            String selectedAcc = _incomeOutgoingAccounts.first;
             String type = 'OUT';
-            DateTime pickerDate = _selectedTxDate;
+            DateTime pickerDate = DateTime.now();
+
+            List<String> getAvailableAccounts(String currentType) {
+              if (currentType == 'IN') {
+                return _allAccounts
+                    .where((a) => a['type'] == 'Incoming' || a['type'] == 'Asset')
+                    .map((a) => a['name'] as String).toList();
+              } else {
+                return _allAccounts
+                    .where((a) => a['type'] == 'Outgoing' || a['type'] == 'Asset' || a['type'] == 'Liability')
+                    .map((a) => a['name'] as String).toList();
+              }
+            }
+
+            List<String> activeAccList = getAvailableAccounts(type);
+            String selectedAcc = activeAccList.isNotEmpty ? activeAccList.first : '';
 
             showModalBottomSheet(
               context: context,
               isScrollControlled: true,
               backgroundColor: const Color(0xFF1E1E1E),
               builder: (ctx) => StatefulBuilder(
-                builder: (context, setModalState) => Padding(
-                  padding: EdgeInsets.only(top: 16, left: 16, right: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Tambah Transaksi', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                      const SizedBox(height: 10),
-                      // Pilihar Tanggal (Bisa Mundur / Bebas)
-                      ListTile(
-                        tileColor: Colors.black26,
-                        title: Text("Tanggal: ${DateFormat('dd/MM/yyyy').format(pickerDate)}"),
-                        trailing: const Icon(Icons.calendar_today, color: Colors.blueAccent),
-                        onTap: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: pickerDate,
-                            firstDate: DateTime(2020),
-                            lastDate: DateTime(2030),
-                          );
-                          if (picked != null) {
-                            setModalState(() => pickerDate = picked);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: selectedAcc,
-                        dropdownColor: const Color(0xFF2C2C2C),
-                        items: [..._balanceSheetAccounts, ..._incomeOutgoingAccounts]
-                            .map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
-                        onChanged: (v) => selectedAcc = v!,
-                        decoration: const InputDecoration(labelText: 'Pilih Akun'),
-                      ),
-                      TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nominal (Rp)')),
-                      TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Keterangan')),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: RadioListTile<String>(
-                              title: const Text('Masuk (+)'),
-                              value: 'IN',
-                              groupValue: type,
-                              onChanged: (v) => setModalState(() => type = v!),
+                builder: (context, setModalState) {
+                  return Padding(
+                    padding: EdgeInsets.only(top: 16, left: 16, right: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Tambah Transaksi', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                        const SizedBox(height: 10),
+                        ListTile(
+                          tileColor: Colors.black26,
+                          title: Text("Tanggal: ${DateFormat('dd/MM/yyyy').format(pickerDate)}"),
+                          trailing: const Icon(Icons.calendar_today, color: Colors.blueAccent),
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: pickerDate,
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2030),
+                            );
+                            if (picked != null) {
+                              setModalState(() => pickerDate = picked);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        // Opsi Radio Masuk/Keluar
+                        Row(
+                          children: [
+                            Expanded(
+                              child: RadioListTile<String>(
+                                title: const Text('Masuk (+)'),
+                                value: 'IN',
+                                groupValue: type,
+                                onChanged: (v) {
+                                  setModalState(() {
+                                    type = v!;
+                                    activeAccList = getAvailableAccounts(type);
+                                    if (activeAccList.isNotEmpty) selectedAcc = activeAccList.first;
+                                  });
+                                },
+                              ),
                             ),
-                          ),
-                          Expanded(
-                            child: RadioListTile<String>(
-                              title: const Text('Keluar (-)'),
-                              value: 'OUT',
-                              groupValue: type,
-                              onChanged: (v) => setModalState(() => type = v!),
+                            Expanded(
+                              child: RadioListTile<String>(
+                                title: const Text('Keluar (-)'),
+                                value: 'OUT',
+                                groupValue: type,
+                                onChanged: (v) {
+                                  setModalState(() {
+                                    type = v!;
+                                    activeAccList = getAvailableAccounts(type);
+                                    if (activeAccList.isNotEmpty) selectedAcc = activeAccList.first;
+                                  });
+                                },
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 15),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(45)),
-                        onPressed: () {
-                          final amt = double.tryParse(amountCtrl.text) ?? 0;
-                          if (amt > 0) {
-                            _addTransaction(selectedAcc, descCtrl.text, amt, type, pickerDate);
-                            Navigator.pop(ctx);
-                          }
-                        },
-                        child: const Text('Simpan Transaksi'),
-                      )
-                    ],
-                  ),
-                ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        // Dropdown Otomatis Berganti Sesuai Masuk/Keluar
+                        DropdownButtonFormField<String>(
+                          value: activeAccList.contains(selectedAcc) ? selectedAcc : null,
+                          dropdownColor: const Color(0xFF2C2C2C),
+                          items: activeAccList.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
+                          onChanged: (v) => setModalState(() => selectedAcc = v!),
+                          decoration: const InputDecoration(labelText: 'Pilih Akun'),
+                        ),
+                        TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nominal (Rp)')),
+                        TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Keterangan')),
+                        const SizedBox(height: 15),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(45)),
+                          onPressed: () {
+                            final amt = double.tryParse(amountCtrl.text) ?? 0;
+                            if (amt > 0 && selectedAcc.isNotEmpty) {
+                              _addTransaction(selectedAcc, descCtrl.text, amt, type, pickerDate);
+                              Navigator.pop(ctx);
+                            }
+                          },
+                          child: const Text('Simpan Transaksi'),
+                        )
+                      ],
+                    ),
+                  );
+                },
               ),
             );
           }
@@ -261,7 +356,6 @@ jobs:
                     )
                 ],
               ),
-              // DRAWER / SIDE MENU ALA BKPER
               drawer: Drawer(
                 backgroundColor: const Color(0xFF181818),
                 child: DefaultTabController(
@@ -281,7 +375,6 @@ jobs:
                     ),
                     body: TabBarView(
                       children: [
-                        // TAB 1: ALL TRANSACTIONS
                         ListTile(
                           leading: const Icon(Icons.list, color: Colors.blueAccent),
                           title: const Text('Lihat Semua Transaksi'),
@@ -290,17 +383,36 @@ jobs:
                             Navigator.pop(context);
                           },
                         ),
-                        // TAB 2: ACCOUNTS (BALANCE SHEET & INCOMING/OUTGOING)
-                        ListView(
-                          padding: const EdgeInsets.all(12),
+                        Column(
                           children: [
-                            const Text('Balance Sheet', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                            ListTile(
+                              leading: const Icon(Icons.add, color: Colors.blueAccent),
+                              title: const Text('New account', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _showNewAccountDialog();
+                              },
+                            ),
                             const Divider(color: Colors.white24),
-                            ..._balanceSheetAccounts.map((acc) => _buildAccountItem(acc)),
-                            const SizedBox(height: 20),
-                            const Text('Incoming & Outgoing', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-                            const Divider(color: Colors.white24),
-                            ..._incomeOutgoingAccounts.map((acc) => _buildAccountItem(acc)),
+                            Expanded(
+                              child: ListView.builder(
+                                itemCount: _allAccounts.length,
+                                itemBuilder: (ctx, i) {
+                                  final acc = _allAccounts[i];
+                                  double total = _getAccountTotal(acc['name']);
+                                  return ListTile(
+                                    dense: true,
+                                    title: Text(acc['name'], style: const TextStyle(color: Colors.white)),
+                                    subtitle: Text(acc['type'], style: TextStyle(color: Colors.grey.shade600, fontSize: 10)),
+                                    trailing: Text('Rp ${total.toStringAsFixed(0)}', style: const TextStyle(color: Colors.blueAccent)),
+                                    onTap: () {
+                                      setState(() => _selectedAccountFilter = acc['name']);
+                                      Navigator.pop(context);
+                                    },
+                                  );
+                                },
+                              ),
+                            ),
                           ],
                         ),
                       ],
@@ -334,20 +446,6 @@ jobs:
                 onPressed: _showFormDialog,
                 child: const Icon(Icons.add, color: Colors.white),
               ),
-            );
-          }
-
-          Widget _buildAccountItem(String accName) {
-            double total = _getAccountTotal(accName);
-            return ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(accName, style: const TextStyle(color: Colors.white)),
-              trailing: Text('Rp ${total.toStringAsFixed(0)}', style: const TextStyle(color: Colors.blueAccent)),
-              onTap: () {
-                setState(() => _selectedAccountFilter = accName);
-                Navigator.pop(context);
-              },
             );
           }
         }
