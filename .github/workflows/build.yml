@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Style Custom Accounts
+        description: Aplikasi Bkper Exact Replica
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_custom.db'),
+            p.join(dbPath, 'bkper_exact.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE accounts(
@@ -84,14 +84,27 @@ jobs:
                 )
               ''');
 
-              // Akun Bawaan Awal
+              // Akun Bawaan Awal ala Bkper
+              await db.insert('accounts', {'name': 'Cadangan Biaya Perawatan', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Inventaris / Aset Tetap', 'type': 'Asset'});
               await db.insert('accounts', {'name': 'Kas', 'type': 'Asset'});
               await db.insert('accounts', {'name': 'Rekening Bank', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Simpanan THR Karyawan', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Tabungan Ekspansi', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Deviden Adia Pakarinti', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Deviden Massinangling Gumelar', 'type': 'Asset'});
+              await db.insert('accounts', {'name': 'Deviden Supra Carthica', 'type': 'Liability'});
+              await db.insert('accounts', {'name': 'Prive Rumah Tangga', 'type': 'Liability'});
               await db.insert('accounts', {'name': 'Utang Bank', 'type': 'Liability'});
-              await db.insert('accounts', {'name': 'Penjualan / Omset', 'type': 'Incoming'});
-              await db.insert('accounts', {'name': 'Operasional / Bensin', 'type': 'Outgoing'});
+              await db.insert('accounts', {'name': 'Utang PPh Final UMKM', 'type': 'Liability'});
+              
+              await db.insert('accounts', {'name': 'Penjualan Kamar', 'type': 'Incoming'});
+              await db.insert('accounts', {'name': 'Beban Bunga Bank', 'type': 'Outgoing'});
+              await db.insert('accounts', {'name': 'Beban Pajak', 'type': 'Outgoing'});
+              await db.insert('accounts', {'name': 'Biaya Perawatan', 'type': 'Outgoing'});
               await db.insert('accounts', {'name': 'Gaji Karyawan', 'type': 'Outgoing'});
-              await db.insert('accounts', {'name': 'Prive Rumah Tangga', 'type': 'Outgoing'});
+              await db.insert('accounts', {'name': 'Operasional', 'type': 'Outgoing'});
+              await db.insert('accounts', {'name': 'Pengeluaran THR Karyawan', 'type': 'Outgoing'});
             },
             version: 1,
           );
@@ -108,8 +121,8 @@ jobs:
               debugShowCheckedModeBanner: false,
               title: 'Bkper UMKM',
               theme: ThemeData.dark().copyWith(
-                scaffoldBackgroundColor: const Color(0xFF121212),
-                primaryColor: const Color(0xFF1F1F1F),
+                scaffoldBackgroundColor: const Color(0xFF121318),
+                primaryColor: const Color(0xFF1C1D24),
                 colorScheme: const ColorScheme.dark(primary: Colors.blueAccent),
               ),
               home: HomeScreen(database: database),
@@ -138,7 +151,7 @@ jobs:
 
           Future<void> _loadData() async {
             final txData = await widget.database.query('transactions', orderBy: 'date DESC, id DESC');
-            final accData = await widget.database.query('accounts', orderBy: 'name ASC');
+            final accData = await widget.database.query('accounts', orderBy: 'id ASC');
             setState(() {
               _allTransactions = txData;
               _allAccounts = accData;
@@ -159,9 +172,7 @@ jobs:
             try {
               await widget.database.insert('accounts', {'name': name, 'type': type});
               _loadData();
-            } catch (e) {
-              // Abaikan jika duplikat
-            }
+            } catch (e) {}
           }
 
           Future<void> _addTransaction(String account, String desc, double amount, String type, DateTime date) async {
@@ -175,7 +186,16 @@ jobs:
             _loadData();
           }
 
-          // Dialog Tambah Akun Baru (Custom Account)
+          Color _getAccountColor(String type) {
+            switch (type) {
+              case 'Asset': return Colors.blue;
+              case 'Liability': return Colors.amber;
+              case 'Incoming': return Colors.green;
+              case 'Outgoing': return Colors.redAccent;
+              default: return Colors.grey;
+            }
+          }
+
           void _showNewAccountDialog() {
             final nameCtrl = TextEditingController();
             String selectedType = 'Outgoing';
@@ -184,19 +204,16 @@ jobs:
               context: context,
               builder: (ctx) => StatefulBuilder(
                 builder: (context, setDlgState) => AlertDialog(
-                  backgroundColor: const Color(0xFF1E1E1E),
+                  backgroundColor: const Color(0xFF1E1E26),
                   title: const Text('New Account'),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      TextField(
-                        controller: nameCtrl,
-                        decoration: const InputDecoration(labelText: 'Name'),
-                      ),
+                      TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         value: selectedType,
-                        dropdownColor: const Color(0xFF2C2C2C),
+                        dropdownColor: const Color(0xFF2C2D38),
                         items: ['Asset', 'Liability', 'Incoming', 'Outgoing']
                             .map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                         onChanged: (v) => setDlgState(() => selectedType = v!),
@@ -222,7 +239,6 @@ jobs:
             );
           }
 
-          // Dialog Tambah Transaksi (Smart Dynamic Accounts)
           void _showFormDialog() {
             final descCtrl = TextEditingController();
             final amountCtrl = TextEditingController();
@@ -247,7 +263,7 @@ jobs:
             showModalBottomSheet(
               context: context,
               isScrollControlled: true,
-              backgroundColor: const Color(0xFF1E1E1E),
+              backgroundColor: const Color(0xFF1E1E26),
               builder: (ctx) => StatefulBuilder(
                 builder: (context, setModalState) {
                   return Padding(
@@ -274,7 +290,6 @@ jobs:
                           },
                         ),
                         const SizedBox(height: 10),
-                        // Opsi Radio Masuk/Keluar
                         Row(
                           children: [
                             Expanded(
@@ -308,10 +323,9 @@ jobs:
                           ],
                         ),
                         const SizedBox(height: 5),
-                        // Dropdown Otomatis Berganti Sesuai Masuk/Keluar
                         DropdownButtonFormField<String>(
                           value: activeAccList.contains(selectedAcc) ? selectedAcc : null,
-                          dropdownColor: const Color(0xFF2C2C2C),
+                          dropdownColor: const Color(0xFF2C2D38),
                           items: activeAccList.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
                           onChanged: (v) => setModalState(() => selectedAcc = v!),
                           decoration: const InputDecoration(labelText: 'Pilih Akun'),
@@ -344,10 +358,13 @@ jobs:
                 ? _allTransactions
                 : _allTransactions.where((tx) => tx['account'] == _selectedAccountFilter).toList();
 
+            final balanceSheetAccs = _allAccounts.where((a) => a['type'] == 'Asset' || a['type'] == 'Liability').toList();
+            final incomingOutgoingAccs = _allAccounts.where((a) => a['type'] == 'Incoming' || a['type'] == 'Outgoing').toList();
+
             return Scaffold(
               appBar: AppBar(
                 title: Text(_selectedAccountFilter ?? 'All Transactions'),
-                backgroundColor: const Color(0xFF1F1F1F),
+                backgroundColor: const Color(0xFF1C1D24),
                 actions: [
                   if (_selectedAccountFilter != null)
                     IconButton(
@@ -357,14 +374,14 @@ jobs:
                 ],
               ),
               drawer: Drawer(
-                backgroundColor: const Color(0xFF181818),
+                backgroundColor: const Color(0xFF14151B),
                 child: DefaultTabController(
                   length: 2,
                   child: Scaffold(
                     backgroundColor: Colors.transparent,
                     appBar: AppBar(
                       automaticallyImplyLeading: false,
-                      backgroundColor: const Color(0xFF222222),
+                      backgroundColor: const Color(0xFF1C1D24),
                       title: const TabBar(
                         indicatorColor: Colors.blueAccent,
                         tabs: [
@@ -375,14 +392,31 @@ jobs:
                     ),
                     body: TabBarView(
                       children: [
-                        ListTile(
-                          leading: const Icon(Icons.list, color: Colors.blueAccent),
-                          title: const Text('Lihat Semua Transaksi'),
-                          onTap: () {
-                            setState(() => _selectedAccountFilter = null);
-                            Navigator.pop(context);
-                          },
+                        // TAB 1: TRANSACTIONS (LIST AKUN + SALDO BALANCE SHEET & INCOMING/OUTGOING)
+                        ListView(
+                          padding: const EdgeInsets.all(12),
+                          children: [
+                            ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.list, color: Colors.blueAccent),
+                              title: const Text('Semua Transaksi', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                              onTap: () {
+                                setState(() => _selectedAccountFilter = null);
+                                Navigator.pop(context);
+                              },
+                            ),
+                            const SizedBox(height: 10),
+                            const Text('Balance Sheet', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
+                            const Divider(color: Colors.white12),
+                            ...balanceSheetAccs.map((acc) => _buildTransactionDrawerItem(acc)),
+                            const SizedBox(height: 20),
+                            const Text('Incoming & Outgoing', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
+                            const Divider(color: Colors.white12),
+                            ...incomingOutgoingAccs.map((acc) => _buildTransactionDrawerItem(acc)),
+                          ],
                         ),
+                        // TAB 2: ACCOUNTS (DAFTAR MURNI AKUN DENGAN IKON WARNA + NEW ACCOUNT)
                         Column(
                           children: [
                             ListTile(
@@ -393,22 +427,22 @@ jobs:
                                 _showNewAccountDialog();
                               },
                             ),
-                            const Divider(color: Colors.white24),
+                            const Divider(color: Colors.white12),
                             Expanded(
                               child: ListView.builder(
                                 itemCount: _allAccounts.length,
                                 itemBuilder: (ctx, i) {
                                   final acc = _allAccounts[i];
-                                  double total = _getAccountTotal(acc['name']);
                                   return ListTile(
-                                    dense: true,
-                                    title: Text(acc['name'], style: const TextStyle(color: Colors.white)),
-                                    subtitle: Text(acc['type'], style: TextStyle(color: Colors.grey.shade600, fontSize: 10)),
-                                    trailing: Text('Rp ${total.toStringAsFixed(0)}', style: const TextStyle(color: Colors.blueAccent)),
-                                    onTap: () {
-                                      setState(() => _selectedAccountFilter = acc['name']);
-                                      Navigator.pop(context);
-                                    },
+                                    leading: Container(
+                                      width: 14,
+                                      height: 14,
+                                      decoration: BoxDecoration(
+                                        color: _getAccountColor(acc['type']),
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                    title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 14)),
                                   );
                                 },
                               ),
@@ -446,6 +480,23 @@ jobs:
                 onPressed: _showFormDialog,
                 child: const Icon(Icons.add, color: Colors.white),
               ),
+            );
+          }
+
+          Widget _buildTransactionDrawerItem(Map<String, dynamic> acc) {
+            double total = _getAccountTotal(acc['name']);
+            return ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 13)),
+              trailing: Text(
+                'Rp ${total.toStringAsFixed(0)}',
+                style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              onTap: () {
+                setState(() => _selectedAccountFilter = acc['name']);
+                Navigator.pop(context);
+              },
             );
           }
         }
