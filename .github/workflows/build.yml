@@ -27,20 +27,221 @@ jobs:
     - name: Create Flutter Project Structure
       run: |
         flutter create --org com.umkm --project-name pembukuan .
+        
+        # Tambahkan dependency sqflite & path
+        cat << 'EOF' > pubspec.yaml
+        name: pembukuan
+        description: Aplikasi Pembukuan UMKM Sederhana
+        publish_to: 'none'
+        version: 1.0.0+1
+
+        environment:
+          sdk: '>=3.0.0 <4.0.0'
+
+        dependencies:
+          flutter:
+            sdk: flutter
+          cupertino_icons: ^1.0.6
+          sqflite: ^2.3.0
+          path: ^1.8.3
+
+        dev_dependencies:
+          flutter_test:
+            sdk: flutter
+          flutter_lints: ^3.0.0
+
+        flutter:
+          uses-material-design: true
+        EOF
+
+        # Isi Kode Aplikasi Utama (UI + Akuntansi + SQLite)
         cat << 'EOF' > lib/main.dart
         import 'package:flutter/material.dart';
+        import 'package:sqflite/sqflite.dart';
+        import 'package:path/path.dart' as p;
 
-        void main() {
-          runApp(const MaterialApp(
-            home: Scaffold(
-              body: Center(
-                child: Text(
-                  'Aplikasi Pembukuan UMKM Siap!',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        void main() async {
+          WidgetsFlutterBinding.ensureInitialized();
+          final dbPath = await getDatabasesPath();
+          final database = await openDatabase(
+            p.join(dbPath, 'umkm_bookkeeping.db'),
+            onCreate: (db, version) {
+              return db.execute(
+                'CREATE TABLE transactions(id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, category TEXT, description TEXT, amount REAL, type TEXT)',
+              );
+            },
+            version: 1,
+          );
+          runApp(UMKMApp(database: database));
+        }
+
+        class UMKMApp extends StatelessWidget {
+          final Database database;
+          const UMKMApp({super.key, required this.database});
+
+          @override
+          Widget build(BuildContext context) {
+            return MaterialApp(
+              debugShowCheckedModeBanner: false,
+              title: 'Pembukuan UMKM',
+              theme: ThemeData(primarySwatch: Colors.teal, useMaterial3: true),
+              home: MainHomeScreen(database: database),
+            );
+          }
+        }
+
+        class MainHomeScreen extends StatefulWidget {
+          final Database database;
+          const MainHomeScreen({super.key, required this.database});
+
+          @override
+          State<MainHomeScreen> createState() => _MainHomeScreenState();
+        }
+
+        class _MainHomeScreenState extends State<MainHomeScreen> {
+          List<Map<String, dynamic>> _txList = [];
+          double _totalIncome = 0;
+          double _totalExpense = 0;
+
+          @override
+          void initState() {
+            super.initState();
+            _loadData();
+          }
+
+          Future<void> _loadData() async {
+            final list = await widget.database.query('transactions', orderBy: 'id DESC');
+            double inc = 0;
+            double exp = 0;
+            for (var item in list) {
+              if (item['type'] == 'IN') {
+                inc += (item['amount'] as num).toDouble();
+              } else {
+                exp += (item['amount'] as num).toDouble();
+              }
+            }
+            setState(() {
+              _txList = list;
+              _totalIncome = inc;
+              _totalExpense = exp;
+            });
+          }
+
+          Future<void> _addTransaction(String type, String category, double amount, String desc) async {
+            await widget.database.insert('transactions', {
+              'date': DateTime.now().toString().split(' ')[0],
+              'category': category,
+              'description': desc,
+              'amount': amount,
+              'type': type,
+            });
+            _loadData();
+          }
+
+          void _showForm(String type) {
+            final amountCtrl = TextEditingController();
+            final descCtrl = TextEditingController();
+            List<String> categories = type == 'IN'
+                ? ['Omset / Penjualan', 'Pendapatan Lain', 'Modal Tambahan']
+                : ['Operasional / Bensin', 'Gaji Karyawan', 'Beli Stok / Bahan', 'Prive Pemilik'];
+            String selectedCat = categories.first;
+
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              builder: (ctx) => Padding(
+                padding: EdgeInsets.only(top: 16, left: 16, right: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(type == 'IN' ? 'Tambah Uang Masuk' : 'Tambah Uang Keluar', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: type == 'IN' ? Colors.green : Colors.red)),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: selectedCat,
+                      items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      onChanged: (v) => selectedCat = v!,
+                      decoration: const InputDecoration(labelText: 'Kategori'),
+                    ),
+                    TextField(controller: amountCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Nominal (Rp)')),
+                    TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Keterangan')),
+                    const SizedBox(height: 15),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: type == 'IN' ? Colors.green : Colors.red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(45)),
+                      onPressed: () {
+                        final amt = double.tryParse(amountCtrl.text) ?? 0;
+                        if (amt > 0) {
+                          _addTransaction(type, selectedCat, amt, descCtrl.text);
+                          Navigator.pop(ctx);
+                        }
+                      },
+                      child: const Text('Simpan'),
+                    )
+                  ],
                 ),
               ),
-            ),
-          ));
+            );
+          }
+
+          @override
+          Widget build(BuildContext context) {
+            double pphUMKM = _totalIncome * 0.005; // Hitung Pajak PPh Final 0.5%
+            return Scaffold(
+              appBar: AppBar(title: const Text('Pembukuan UMKM')),
+              body: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.teal.shade50, borderRadius: BorderRadius.circular(12)),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Omset: Rp ${_totalIncome.toStringAsFixed(0)}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                            Text('Pengeluaran: Rp ${_totalExpense.toStringAsFixed(0)}', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        const Divider(),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Laba Bersih: Rp ${(_totalIncome - _totalExpense).toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text('Est. Pajak (0.5%): Rp ${pphUMKM.toStringAsFixed(0)}', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                          ],
+                        )
+                      ],
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      const SizedBox(width: 12),
+                      Expanded(child: ElevatedButton.icon(onPressed: () => _showForm('IN'), icon: const Icon(Icons.add), label: const Text('Uang Masuk'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white))),
+                      const SizedBox(width: 8),
+                      Expanded(child: ElevatedButton.icon(onPressed: () => _showForm('OUT'), icon: const Icon(Icons.remove), label: const Text('Uang Keluar'), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white))),
+                      const SizedBox(width: 12),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _txList.length,
+                      itemBuilder: (ctx, i) {
+                        final item = _txList[i];
+                        bool isInc = item['type'] == 'IN';
+                        return ListTile(
+                          leading: Icon(isInc ? Icons.arrow_downward : Icons.arrow_upward, color: isInc ? Colors.green : Colors.red),
+                          title: Text(item['category']),
+                          subtitle: Text('${item['date']} - ${item['description']}'),
+                          trailing: Text('Rp ${item['amount'].toStringAsFixed(0)}', style: TextStyle(color: isInc ? Colors.green : Colors.red, fontWeight: FontWeight.bold)),
+                        );
+                      },
+                    ),
+                  )
+                ],
+              ),
+            );
+          }
         }
         EOF
 
@@ -52,3 +253,4 @@ jobs:
       with:
         name: pembukuan-umkm-apk
         path: build/app/outputs/flutter-apk/app-release.apk
+                
