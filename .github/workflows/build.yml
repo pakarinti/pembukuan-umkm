@@ -28,7 +28,7 @@ jobs:
       run: |
         flutter create --org com.kasimpel.app --project-name pembukuan .
         
-        # SUNTIKAN KODE: Memaksa spesifikasi Android naik level
+        # Upgrade spesifikasi Android
         sed -i 's/flutter.minSdkVersion/24/g' android/app/build.gradle
         sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
         sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
@@ -68,14 +68,26 @@ jobs:
           uses-material-design: true
         EOF
 
-        # SUNTIKAN KODE: Mengubah Logo/Icon Aplikasi secara Otomatis
-        mkdir -p android/app/src/main/res/mipmap-hdpi
+        # SUNTIKAN KODE: Ganti Icon Logo Aplikasi Kasimpel Otomatis
         mkdir -p android/app/src/main/res/mipmap-mdpi
+        mkdir -p android/app/src/main/res/mipmap-hdpi
         mkdir -p android/app/src/main/res/mipmap-xhdpi
         mkdir -p android/app/src/main/res/mipmap-xxhdpi
         mkdir -p android/app/src/main/res/mipmap-xxxhdpi
 
-        curl -s -o temp_logo.png "https://raw.githubusercontent.com/pakarinti/pembukuan/main/app_logo.png" || true
+        python3 -c "
+        import base64, urllib.request
+        url = 'https://raw.githubusercontent.com/pakarinti/pembukuan/main/app_logo.png'
+        " || true
+
+        # Download langsung dari URL gambar publik yang valid
+        curl -s -L "https://i.ibb.co.co/68Xb3Qz/kasimpel-icon.png" -o android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || true
+
+        # Duplikasi logo ke seluruh folder resolusi Android
+        cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png || true
+        cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png || true
+        cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png || true
+        cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png || true
 
         # Inject AdMob App ID & Nama Aplikasi ke AndroidManifest.xml
         cat << 'EOF' > android/app/src/main/AndroidManifest.xml
