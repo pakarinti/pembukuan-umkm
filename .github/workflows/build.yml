@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK & AAB
 
 on:
   push:
@@ -68,12 +68,22 @@ jobs:
           uses-material-design: true
         EOF
 
+        # SUNTIKAN KODE: Mengubah Logo/Icon Aplikasi secara Otomatis
+        mkdir -p android/app/src/main/res/mipmap-hdpi
+        mkdir -p android/app/src/main/res/mipmap-mdpi
+        mkdir -p android/app/src/main/res/mipmap-xhdpi
+        mkdir -p android/app/src/main/res/mipmap-xxhdpi
+        mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+
+        curl -s -o temp_logo.png "https://raw.githubusercontent.com/pakarinti/pembukuan/main/app_logo.png" || true
+
         # Inject AdMob App ID & Nama Aplikasi ke AndroidManifest.xml
         cat << 'EOF' > android/app/src/main/AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.INTERNET"/>
             <application
                 android:label="Kasimpel: Pembukuan UMKM Gratis"
+                android:icon="@mipmap/ic_launcher"
                 android:name="${applicationName}">
                 <meta-data
                     android:name="com.google.android.gms.ads.APPLICATION_ID"
@@ -1145,11 +1155,19 @@ jobs:
         }
         EOF
 
-    - name: Build APK
-      run: flutter build apk --release
+    - name: Build APK & App Bundle (AAB)
+      run: |
+        flutter build apk --release
+        flutter build appbundle --release
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: kasimpel-pembukuan-umkm-apk
         path: build/app/outputs/flutter-apk/app-release.apk
+
+    - name: Upload AAB Artifact (Play Store Release)
+      uses: actions/upload-artifact@v4
+      with:
+        name: kasimpel-pembukuan-umkm-aab
+        path: build/app/outputs/bundle/release/app-release.aab
