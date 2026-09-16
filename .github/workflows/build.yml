@@ -36,13 +36,11 @@ jobs:
           sed -i 's/version "1.7.10"/version "1.9.22"/g' android/settings.gradle
         fi
 
-        # Download Logo Resmi Kasimpel untuk Icon Launcher
+        # Penanganan Icon Aman Anti-Crash
         mkdir -p assets
-        curl -o assets/app_icon.png "https://raw.githubusercontent.com/pakarinti/pembukuan-umkm/main/assets/app_icon.png" || true
-        
-        # Jika gambar belum ada di repo, buatkan icon default transparan agar build tidak fail
         if [ ! -f "assets/app_icon.png" ]; then
-          python3 -c "from PIL import Image; img = Image.new('RGB', (512, 512), color = (33, 150, 243)); img.save('assets/app_icon.png')"
+          echo "Membuat Icon Biru Default karena app_icon.png belum di-upload..."
+          convert -size 512x512 xc:"#2196F3" assets/app_icon.png
         fi
 
         # Konfigurasi Pubspec
@@ -543,8 +541,8 @@ jobs:
               context: context,
               builder: (ctx) => AlertDialog(
                 backgroundColor: const Color(0xFF1E1E26),
-                title: const Text('Close App', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                content: const Text('Are you sure you want to close the app?', style: TextStyle(color: Colors.white70)),
+                title: const Text('Keluar Aplikasi', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                content: const Text('Apakah Anda yakin ingin keluar dari Kasimpel?', style: TextStyle(color: Colors.white70)),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.of(ctx).pop(false),
