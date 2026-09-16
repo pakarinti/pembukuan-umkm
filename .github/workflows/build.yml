@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
     - name: Set up Java 17
       uses: actions/setup-java@v5
@@ -219,7 +220,6 @@ jobs:
 
           final NumberFormat _currencyFormat = NumberFormat('#,##0.00', 'en_US');
 
-          // ADMOB INTERSTITIAL AD SETUP
           InterstitialAd? _interstitialAd;
           bool _isAdLoaded = false;
           final String _adUnitId = 'ca-app-pub-1566356165337565/4466204019';
@@ -408,7 +408,6 @@ jobs:
             await _loadDataForCurrentBook();
           }
 
-          // SIMPAN PROJECT (SHARE CSV) + TRIGGER IKLAN
           Future<void> _saveProjectCSV() async {
             try {
               List<List<dynamic>> rows = [];
@@ -437,7 +436,6 @@ jobs:
             }
           }
 
-          // EXPORT EXCEL (CSV JURNAL UMUM) + TRIGGER IKLAN
           Future<void> _exportExcel() async {
             try {
               List<List<dynamic>> rows = [];
@@ -467,7 +465,6 @@ jobs:
             }
           }
 
-          // IMPORT PROJECT (AUTO CREATE NEW BOOK)
           Future<void> _importProjectCSV() async {
             try {
               FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -535,7 +532,6 @@ jobs:
             }
           }
 
-          // EXIT CONFIRMATION DIALOG (WITH AD)
           Future<bool> _onWillPop() async {
             final shouldExit = await showDialog<bool>(
               context: context,
