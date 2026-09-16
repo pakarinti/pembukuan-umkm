@@ -26,9 +26,9 @@ jobs:
 
     - name: Create Flutter Project Structure & Upgrade Android Specs
       run: |
-        flutter create --org com.umkm --project-name pembukuan .
+        flutter create --org com.kasimpel.app --project-name pembukuan .
         
-        # SUNTIKAN KODE: Memaksa spesifikasi Android naik level agar kompatibel dengan FilePicker & SharePlus
+        # SUNTIKAN KODE: Memaksa spesifikasi Android naik level
         sed -i 's/flutter.minSdkVersion/24/g' android/app/build.gradle
         sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
         sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
@@ -38,7 +38,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Export Import Final Fix
+        description: Kasimpel Pembukuan UMKM Gratis
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -57,6 +57,7 @@ jobs:
           share_plus: ^9.0.0
           cross_file: ^0.3.4
           path_provider: ^2.1.3
+          google_mobile_ads: ^5.1.0
 
         dev_dependencies:
           flutter_test:
@@ -67,9 +68,44 @@ jobs:
           uses-material-design: true
         EOF
 
+        # Inject AdMob App ID & Nama Aplikasi ke AndroidManifest.xml
+        cat << 'EOF' > android/app/src/main/AndroidManifest.xml
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.INTERNET"/>
+            <application
+                android:label="Kasimpel: Pembukuan UMKM Gratis"
+                android:name="${applicationName}">
+                <meta-data
+                    android:name="com.google.android.gms.ads.APPLICATION_ID"
+                    android:value="ca-app-pub-1566356165337565~9309046165"/>
+                <activity
+                    android:name=".MainActivity"
+                    android:exported="true"
+                    android:launchMode="singleTop"
+                    android:theme="@style/LaunchTheme"
+                    android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                    android:hardwareAccelerated="true"
+                    android:windowSoftInputMode="adjustResize">
+                    <meta-data
+                      android:name="io.flutter.embedding.android.NormalTheme"
+                      android:resource="@style/NormalTheme"
+                      />
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN"/>
+                        <category android:name="android.intent.category.LAUNCHER"/>
+                    </intent-filter>
+                </activity>
+                <meta-data
+                    android:name="flutterEmbedding"
+                    android:value="2" />
+            </application>
+        </manifest>
+        EOF
+
         cat << 'EOF' > lib/main.dart
         import 'dart:io';
         import 'package:flutter/material.dart';
+        import 'package:flutter/services.dart';
         import 'package:sqflite/sqflite.dart';
         import 'package:path/path.dart' as p;
         import 'package:intl/intl.dart';
@@ -78,12 +114,15 @@ jobs:
         import 'package:share_plus/share_plus.dart';
         import 'package:cross_file/cross_file.dart';
         import 'package:path_provider/path_provider.dart';
+        import 'package:google_mobile_ads/google_mobile_ads.dart';
 
         void main() async {
           WidgetsFlutterBinding.ensureInitialized();
+          MobileAds.instance.initialize();
+
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_export_import_stable_final.db'),
+            p.join(dbPath, 'kasimpel_umkm_v1.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -126,7 +165,7 @@ jobs:
           Widget build(BuildContext context) {
             return MaterialApp(
               debugShowCheckedModeBanner: false,
-              title: 'Bkper UMKM',
+              title: 'Kasimpel: Pembukuan UMKM Gratis',
               theme: ThemeData.dark().copyWith(
                 scaffoldBackgroundColor: const Color(0xFF121318),
                 primaryColor: const Color(0xFF1C1D24),
@@ -158,10 +197,53 @@ jobs:
 
           final NumberFormat _currencyFormat = NumberFormat('#,##0.00', 'en_US');
 
+          // IKLAN ADMOB INTERSTITIAL
+          InterstitialAd? _interstitialAd;
+          bool _isAdLoaded = false;
+          final String _adUnitId = 'ca-app-pub-1566356165337565/4466204019';
+
           @override
           void initState() {
             super.initState();
             _loadBooks();
+            _loadInterstitialAd();
+          }
+
+          void _loadInterstitialAd() {
+            InterstitialAd.load(
+              adUnitId: _adUnitId,
+              request: const AdRequest(),
+              adLoadCallback: InterstitialAdLoadCallback(
+                onAdLoaded: (ad) {
+                  _interstitialAd = ad;
+                  _isAdLoaded = true;
+                },
+                onAdFailedToLoad: (error) {
+                  _isAdLoaded = false;
+                  _interstitialAd = null;
+                },
+              ),
+            );
+          }
+
+          void _showInterstitialAd({VoidCallback? onAdClosed}) {
+            if (_isAdLoaded && _interstitialAd != null) {
+              _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+                onAdDismissedFullScreenContent: (ad) {
+                  ad.dispose();
+                  _loadInterstitialAd();
+                  if (onAdClosed != null) onAdClosed();
+                },
+                onAdFailedToShowFullScreenContent: (ad, error) {
+                  ad.dispose();
+                  _loadInterstitialAd();
+                  if (onAdClosed != null) onAdClosed();
+                },
+              );
+              _interstitialAd!.show();
+            } else {
+              if (onAdClosed != null) onAdClosed();
+            }
           }
 
           Future<void> _loadBooks() async {
@@ -304,7 +386,7 @@ jobs:
             await _loadDataForCurrentBook();
           }
 
-          // FITUR SIMPAN PROJECT (SHARE CSV)
+          // FITUR SIMPAN PROJECT (SHARE CSV) + IKLAN
           Future<void> _saveProjectCSV() async {
             try {
               List<List<dynamic>> rows = [];
@@ -327,12 +409,13 @@ jobs:
               await file.writeAsString(csvData);
 
               await Share.shareXFiles([XFile(filePath)], text: 'Backup Project CSV: $_currentBookName');
+              _showInterstitialAd();
             } catch (e) {
               debugPrint('Error saving project: $e');
             }
           }
 
-          // FITUR EXPORT EXCEL (CSV JURNAL UMUM)
+          // FITUR EXPORT EXCEL (CSV JURNAL UMUM) + IKLAN
           Future<void> _exportExcel() async {
             try {
               List<List<dynamic>> rows = [];
@@ -356,6 +439,7 @@ jobs:
               await file.writeAsString(csvData);
 
               await Share.shareXFiles([XFile(filePath)], text: 'Export Jurnal Excel: $_currentBookName');
+              _showInterstitialAd();
             } catch (e) {
               debugPrint('Error exporting excel: $e');
             }
@@ -427,6 +511,37 @@ jobs:
             } catch (e) {
               debugPrint('Error importing project: $e');
             }
+          }
+
+          // TRIGGER IKLAN SAAT PRESS BACK / EXIT APLIKASI
+          Future<bool> _onWillPop() async {
+            final shouldExit = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                backgroundColor: const Color(0xFF1E1E26),
+                title: const Text('Keluar Aplikasi', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                content: const Text('Apakah Anda yakin ingin keluar dari Kasimpel?', style: TextStyle(color: Colors.white70)),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('NO', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('YES'),
+                  ),
+                ],
+              ),
+            );
+
+            if (shouldExit == true) {
+              _showInterstitialAd(onAdClosed: () {
+                SystemNavigator.pop();
+              });
+              return false;
+            }
+            return false;
           }
 
           Color _getAccountColor(String type) {
@@ -707,294 +822,297 @@ jobs:
               ...outgoingAccs,
             ];
 
-            return Scaffold(
-              appBar: AppBar(
-                backgroundColor: const Color(0xFF1C1D24),
-                title: PopupMenuButton<dynamic>(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_currentBookName.isEmpty ? 'Pilih Buku' : _currentBookName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      const Icon(Icons.arrow_drop_down),
-                    ],
-                  ),
-                  onSelected: (val) {
-                    if (val == 'CREATE_NEW') {
-                      _showBookDialog();
-                    } else if (val is Map && val.containsKey('id')) {
-                      setState(() {
-                        _currentBookId = val['id'];
-                        _currentBookName = val['name'];
-                      });
-                      _loadDataForCurrentBook();
-                    }
-                  },
-                  itemBuilder: (ctx) => [
-                    ..._books.map((b) => PopupMenuItem(
-                          value: b,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(b['name'], style: TextStyle(fontWeight: b['id'] == _currentBookId ? FontWeight.bold : FontWeight.normal)),
-                              Row(
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.edit, size: 16, color: Colors.grey),
-                                    onPressed: () {
-                                      Navigator.pop(ctx);
-                                      _showBookDialog(bookEdit: b);
-                                    },
-                                  ),
-                                  if (_books.length > 1)
+            return WillPopScope(
+              onWillPop: _onWillPop,
+              child: Scaffold(
+                appBar: AppBar(
+                  backgroundColor: const Color(0xFF1C1D24),
+                  title: PopupMenuButton<dynamic>(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_currentBookName.isEmpty ? 'Pilih Buku' : _currentBookName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
+                    onSelected: (val) {
+                      if (val == 'CREATE_NEW') {
+                        _showBookDialog();
+                      } else if (val is Map && val.containsKey('id')) {
+                        setState(() {
+                          _currentBookId = val['id'];
+                          _currentBookName = val['name'];
+                        });
+                        _loadDataForCurrentBook();
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      ..._books.map((b) => PopupMenuItem(
+                            value: b,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(b['name'], style: TextStyle(fontWeight: b['id'] == _currentBookId ? FontWeight.bold : FontWeight.normal)),
+                                Row(
+                                  children: [
                                     IconButton(
-                                      icon: const Icon(Icons.delete, size: 16, color: Colors.redAccent),
+                                      icon: const Icon(Icons.edit, size: 16, color: Colors.grey),
                                       onPressed: () {
                                         Navigator.pop(ctx);
-                                        _deleteBook(b['id']);
+                                        _showBookDialog(bookEdit: b);
                                       },
                                     ),
-                                ],
-                              )
+                                    if (_books.length > 1)
+                                      IconButton(
+                                        icon: const Icon(Icons.delete, size: 16, color: Colors.redAccent),
+                                        onPressed: () {
+                                          Navigator.pop(ctx);
+                                          _deleteBook(b['id']);
+                                        },
+                                      ),
+                                  ],
+                                )
+                              ],
+                            ),
+                          )),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'CREATE_NEW',
+                        child: Row(
+                          children: [
+                            Icon(Icons.add, color: Colors.blueAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Create New Book', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    if (_selectedAccountFilter != null)
+                      IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () => setState(() => _selectedAccountFilter = null),
+                      ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (val) {
+                        if (val == 'IMPORT') _importProjectCSV();
+                        if (val == 'SAVE') _saveProjectCSV();
+                        if (val == 'EXCEL') _exportExcel();
+                      },
+                      itemBuilder: (ctx) => [
+                        const PopupMenuItem(
+                          value: 'IMPORT',
+                          child: Row(
+                            children: [
+                              Icon(Icons.file_upload_outlined, color: Colors.blueAccent, size: 20),
+                              SizedBox(width: 10),
+                              Text('Import Project (.csv)'),
                             ],
                           ),
-                        )),
-                    const PopupMenuDivider(),
-                    const PopupMenuItem(
-                      value: 'CREATE_NEW',
-                      child: Row(
-                        children: [
-                          Icon(Icons.add, color: Colors.blueAccent, size: 20),
-                          SizedBox(width: 8),
-                          Text('Create New Book', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'SAVE',
+                          child: Row(
+                            children: [
+                              Icon(Icons.share_outlined, color: Colors.green, size: 20),
+                              SizedBox(width: 10),
+                              Text('Save / Share Project'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 'EXCEL',
+                          child: Row(
+                            children: [
+                              Icon(Icons.table_chart_outlined, color: Colors.amber, size: 20),
+                              SizedBox(width: 10),
+                              Text('Export Excel (.csv)'),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                actions: [
-                  if (_selectedAccountFilter != null)
-                    IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () => setState(() => _selectedAccountFilter = null),
-                    ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert),
-                    onSelected: (val) {
-                      if (val == 'IMPORT') _importProjectCSV();
-                      if (val == 'SAVE') _saveProjectCSV();
-                      if (val == 'EXCEL') _exportExcel();
-                    },
-                    itemBuilder: (ctx) => [
-                      const PopupMenuItem(
-                        value: 'IMPORT',
-                        child: Row(
-                          children: [
-                            Icon(Icons.file_upload_outlined, color: Colors.blueAccent, size: 20),
-                            SizedBox(width: 10),
-                            Text('Import Project (.csv)'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'SAVE',
-                        child: Row(
-                          children: [
-                            Icon(Icons.share_outlined, color: Colors.green, size: 20),
-                            SizedBox(width: 10),
-                            Text('Save / Share Project'),
-                          ],
-                        ),
-                      ),
-                      const PopupMenuDivider(),
-                      const PopupMenuItem(
-                        value: 'EXCEL',
-                        child: Row(
-                          children: [
-                            Icon(Icons.table_chart_outlined, color: Colors.amber, size: 20),
-                            SizedBox(width: 10),
-                            Text('Export Excel (.csv)'),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              drawer: Drawer(
-                backgroundColor: const Color(0xFF14151B),
-                child: StatefulBuilder(
-                  builder: (context, setDrawerState) => DefaultTabController(
-                    length: 2,
-                    child: Scaffold(
-                      backgroundColor: Colors.transparent,
-                      appBar: AppBar(
-                        automaticallyImplyLeading: false,
-                        backgroundColor: const Color(0xFF1C1D24),
-                        title: const TabBar(
-                          indicatorColor: Colors.blueAccent,
-                          tabs: [
-                            Tab(text: 'Transactions'),
-                            Tab(text: 'Accounts'),
-                          ],
-                        ),
-                      ),
-                      body: TabBarView(
-                        children: [
-                          ListView(
-                            padding: const EdgeInsets.all(12),
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.chevron_left, color: Colors.grey),
-                                    onPressed: () {
-                                      setDrawerState(() {
-                                        _selectedMonthPeriod = DateTime(_selectedMonthPeriod.year, _selectedMonthPeriod.month - 1);
-                                      });
-                                      setState(() {});
-                                    },
-                                  ),
-                                  Text(
-                                    DateFormat('MM/yyyy').format(_selectedMonthPeriod),
-                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.blueAccent),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.chevron_right, color: Colors.grey),
-                                    onPressed: () {
-                                      setDrawerState(() {
-                                        _selectedMonthPeriod = DateTime(_selectedMonthPeriod.year, _selectedMonthPeriod.month + 1);
-                                      });
-                                      setState(() {});
-                                    },
-                                  ),
-                                ],
-                              ),
-                              ListTile(
-                                dense: true,
-                                contentPadding: EdgeInsets.zero,
-                                leading: const Icon(Icons.list, color: Colors.blueAccent),
-                                title: const Text('Semua Transaksi', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
-                                onTap: () {
-                                  setState(() => _selectedAccountFilter = null);
-                                  Navigator.pop(context);
-                                },
-                              ),
-                              const SizedBox(height: 10),
-                              const Text('Balance Sheet', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
-                              const Divider(color: Colors.white12),
-                              ...balanceSheetAccs.map((acc) => _buildTransactionDrawerItem(acc)),
-                              const SizedBox(height: 20),
-                              const Text('Incoming & Outgoing', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
-                              const Divider(color: Colors.white12),
-                              ...incomingOutgoingAccs.map((acc) => _buildTransactionDrawerItem(acc)),
+                drawer: Drawer(
+                  backgroundColor: const Color(0xFF14151B),
+                  child: StatefulBuilder(
+                    builder: (context, setDrawerState) => DefaultTabController(
+                      length: 2,
+                      child: Scaffold(
+                        backgroundColor: Colors.transparent,
+                        appBar: AppBar(
+                          automaticallyImplyLeading: false,
+                          backgroundColor: const Color(0xFF1C1D24),
+                          title: const TabBar(
+                            indicatorColor: Colors.blueAccent,
+                            tabs: [
+                              Tab(text: 'Transactions'),
+                              Tab(text: 'Accounts'),
                             ],
                           ),
-                          Column(
-                            children: [
-                              ListTile(
-                                leading: const Icon(Icons.add, color: Colors.blueAccent),
-                                title: const Text('New account', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  _showNewAccountDialog();
-                                },
-                              ),
-                              const Divider(color: Colors.white12),
-                              Expanded(
-                                child: sortedAllAccountsTab.isEmpty
-                                    ? const Center(child: Text('Belum ada akun.', style: TextStyle(color: Colors.grey, fontSize: 11)))
-                                    : ListView.builder(
-                                        itemCount: sortedAllAccountsTab.length,
-                                        itemBuilder: (ctx, i) {
-                                          final acc = sortedAllAccountsTab[i];
-                                          return ListTile(
-                                            leading: Container(
-                                              width: 14,
-                                              height: 14,
-                                              decoration: BoxDecoration(
-                                                color: _getAccountColor(acc['type']),
-                                                borderRadius: BorderRadius.circular(3),
+                        ),
+                        body: TabBarView(
+                          children: [
+                            ListView(
+                              padding: const EdgeInsets.all(12),
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.chevron_left, color: Colors.grey),
+                                      onPressed: () {
+                                        setDrawerState(() {
+                                          _selectedMonthPeriod = DateTime(_selectedMonthPeriod.year, _selectedMonthPeriod.month - 1);
+                                        });
+                                        setState(() {});
+                                      },
+                                    ),
+                                    Text(
+                                      DateFormat('MM/yyyy').format(_selectedMonthPeriod),
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.blueAccent),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.chevron_right, color: Colors.grey),
+                                      onPressed: () {
+                                        setDrawerState(() {
+                                          _selectedMonthPeriod = DateTime(_selectedMonthPeriod.year, _selectedMonthPeriod.month + 1);
+                                        });
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ],
+                                ),
+                                ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: const Icon(Icons.list, color: Colors.blueAccent),
+                                  title: const Text('Semua Transaksi', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                                  onTap: () {
+                                    setState(() => _selectedAccountFilter = null);
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                const Text('Balance Sheet', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
+                                const Divider(color: Colors.white12),
+                                ...balanceSheetAccs.map((acc) => _buildTransactionDrawerItem(acc)),
+                                const SizedBox(height: 20),
+                                const Text('Incoming & Outgoing', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
+                                const Divider(color: Colors.white12),
+                                ...incomingOutgoingAccs.map((acc) => _buildTransactionDrawerItem(acc)),
+                              ],
+                            ),
+                            Column(
+                              children: [
+                                ListTile(
+                                  leading: const Icon(Icons.add, color: Colors.blueAccent),
+                                  title: const Text('New account', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold)),
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    _showNewAccountDialog();
+                                  },
+                                ),
+                                const Divider(color: Colors.white12),
+                                Expanded(
+                                  child: sortedAllAccountsTab.isEmpty
+                                      ? const Center(child: Text('Belum ada akun.', style: TextStyle(color: Colors.grey, fontSize: 11)))
+                                      : ListView.builder(
+                                          itemCount: sortedAllAccountsTab.length,
+                                          itemBuilder: (ctx, i) {
+                                            final acc = sortedAllAccountsTab[i];
+                                            return ListTile(
+                                              leading: Container(
+                                                width: 14,
+                                                height: 14,
+                                                decoration: BoxDecoration(
+                                                  color: _getAccountColor(acc['type']),
+                                                  borderRadius: BorderRadius.circular(3),
+                                                ),
                                               ),
-                                            ),
-                                            title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 14)),
-                                            trailing: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                IconButton(
-                                                  icon: const Icon(Icons.edit, size: 18, color: Colors.grey),
-                                                  onPressed: () {
-                                                    Navigator.pop(context);
-                                                    _showNewAccountDialog(editAcc: acc);
-                                                  },
-                                                ),
-                                                IconButton(
-                                                  icon: const Icon(Icons.delete, size: 18, color: Colors.redAccent),
-                                                  onPressed: () {
-                                                    _deleteAccount(acc['id'], acc['name']);
-                                                    Navigator.pop(context);
-                                                  },
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      ),
-                              ),
-                            ],
-                          ),
-                        ],
+                                              title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 14)),
+                                              trailing: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  IconButton(
+                                                    icon: const Icon(Icons.edit, size: 18, color: Colors.grey),
+                                                    onPressed: () {
+                                                      Navigator.pop(context);
+                                                      _showNewAccountDialog(editAcc: acc);
+                                                    },
+                                                  ),
+                                                  IconButton(
+                                                    icon: const Icon(Icons.delete, size: 18, color: Colors.redAccent),
+                                                    onPressed: () {
+                                                      _deleteAccount(acc['id'], acc['name']);
+                                                      Navigator.pop(context);
+                                                    },
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              body: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(10.0),
-                    child: TextField(
-                      onChanged: (val) => setState(() => _searchQuery = val),
-                      decoration: InputDecoration(
-                        hintText: 'Search transactions...',
-                        prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        filled: true,
-                        fillColor: const Color(0xFF1C1D24),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                body: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(10.0),
+                      child: TextField(
+                        onChanged: (val) => setState(() => _searchQuery = val),
+                        decoration: InputDecoration(
+                          hintText: 'Search transactions...',
+                          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          filled: true,
+                          fillColor: const Color(0xFF1C1D24),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                        ),
                       ),
                     ),
-                  ),
-                  Expanded(
-                    child: filteredList.isEmpty
-                        ? const Center(child: Text('Tidak ada transaksi', style: TextStyle(color: Colors.grey)))
-                        : ListView.builder(
-                            itemCount: filteredList.length,
-                            itemBuilder: (ctx, i) {
-                              final tx = filteredList[i];
-                              final formattedAmount = _currencyFormat.format(tx['amount']);
-                              return Container(
-                                decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
-                                child: ListTile(
-                                  onTap: () => _showFormDialog(txEdit: tx),
-                                  leading: const Icon(Icons.check_circle_outline, color: Colors.green),
-                                  title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
-                                  subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
-                                  trailing: Text(
-                                    formattedAmount,
-                                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
+                    Expanded(
+                      child: filteredList.isEmpty
+                          ? const Center(child: Text('Tidak ada transaksi', style: TextStyle(color: Colors.grey)))
+                          : ListView.builder(
+                              itemCount: filteredList.length,
+                              itemBuilder: (ctx, i) {
+                                final tx = filteredList[i];
+                                final formattedAmount = _currencyFormat.format(tx['amount']);
+                                return Container(
+                                  decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
+                                  child: ListTile(
+                                    onTap: () => _showFormDialog(txEdit: tx),
+                                    leading: const Icon(Icons.check_circle_outline, color: Colors.green),
+                                    title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
+                                    subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
+                                    trailing: Text(
+                                      formattedAmount,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
+                                    ),
                                   ),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-              floatingActionButton: FloatingActionButton(
-                backgroundColor: Colors.blueAccent,
-                onPressed: () => _showFormDialog(),
-                child: const Icon(Icons.add, color: Colors.white),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+                floatingActionButton: FloatingActionButton(
+                  backgroundColor: Colors.blueAccent,
+                  onPressed: () => _showFormDialog(),
+                  child: const Icon(Icons.add, color: Colors.white),
+                ),
               ),
             );
           }
@@ -1033,5 +1151,5 @@ jobs:
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: pembukuan-umkm-apk
+        name: kasimpel-pembukuan-umkm-apk
         path: build/app/outputs/flutter-apk/app-release.apk
