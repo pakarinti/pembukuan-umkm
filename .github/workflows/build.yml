@@ -12,7 +12,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # FIX WARNING: Menggunakan actions/setup-java@v5 sesuai peringatan GitHub
     - name: Set up Java 17
       uses: actions/setup-java@v5
       with:
@@ -25,9 +24,17 @@ jobs:
         flutter-version: '3.19.x'
         channel: 'stable'
 
-    - name: Create Flutter Project Structure
+    - name: Create Flutter Project Structure & Upgrade Android Specs
       run: |
         flutter create --org com.umkm --project-name pembukuan .
+        
+        # SUNTIKAN KODE: Memaksa spesifikasi Android naik level agar kompatibel dengan FilePicker & SharePlus
+        sed -i 's/flutter.minSdkVersion/24/g' android/app/build.gradle
+        sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
+        sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
+        if [ -f "android/settings.gradle" ]; then
+          sed -i 's/version "1.7.10"/version "1.9.22"/g' android/settings.gradle
+        fi
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
@@ -45,12 +52,11 @@ jobs:
           sqflite: ^2.3.0
           path: ^1.8.3
           intl: ^0.19.0
-          # FIX ERROR: Versi CSV disesuaikan ke ^6.0.0 sesuai log error
           csv: ^6.0.0
-          file_picker: ^8.0.0
-          share_plus: ^7.2.2
-          cross_file: ^0.3.3
-          path_provider: ^2.1.2
+          file_picker: ^8.0.3
+          share_plus: ^9.0.0
+          cross_file: ^0.3.4
+          path_provider: ^2.1.3
 
         dev_dependencies:
           flutter_test:
@@ -77,7 +83,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_export_import_stable_v3.db'),
+            p.join(dbPath, 'bkper_export_import_stable_final.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -300,114 +306,126 @@ jobs:
 
           // FITUR SIMPAN PROJECT (SHARE CSV)
           Future<void> _saveProjectCSV() async {
-            List<List<dynamic>> rows = [];
-            rows.add(["Date", "From Account", "To Account", "Description", "Amount"]);
+            try {
+              List<List<dynamic>> rows = [];
+              rows.add(["Date", "From Account", "To Account", "Description", "Amount"]);
 
-            for (var tx in _allTransactions) {
-              rows.add([
-                tx['date'],
-                tx['from_account'],
-                tx['to_account'],
-                tx['description'],
-                tx['amount']
-              ]);
+              for (var tx in _allTransactions) {
+                rows.add([
+                  tx['date'],
+                  tx['from_account'],
+                  tx['to_account'],
+                  tx['description'],
+                  tx['amount']
+                ]);
+              }
+
+              String csvData = const ListToCsvConverter().convert(rows);
+              final tempDir = await getTemporaryDirectory();
+              final filePath = '${tempDir.path}/${_currentBookName.replaceAll(' ', '_')}_Backup.csv';
+              final file = File(filePath);
+              await file.writeAsString(csvData);
+
+              await Share.shareXFiles([XFile(filePath)], text: 'Backup Project CSV: $_currentBookName');
+            } catch (e) {
+              debugPrint('Error saving project: $e');
             }
-
-            String csvData = const ListToCsvConverter().convert(rows);
-            final tempDir = await getTemporaryDirectory();
-            final filePath = '${tempDir.path}/${_currentBookName.replaceAll(' ', '_')}_Backup.csv';
-            final file = File(filePath);
-            await file.writeAsString(csvData);
-
-            await Share.shareXFiles([XFile(filePath)], text: 'Backup Project CSV: $_currentBookName');
           }
 
           // FITUR EXPORT EXCEL (CSV JURNAL UMUM)
           Future<void> _exportExcel() async {
-            List<List<dynamic>> rows = [];
-            rows.add(["JURNAL UMUM - $_currentBookName"]);
-            rows.add(["Tanggal", "Keterangan", "Akun Asal (From)", "Akun Tujuan (To)", "Jumlah (Rp)"]);
+            try {
+              List<List<dynamic>> rows = [];
+              rows.add(["JURNAL UMUM - $_currentBookName"]);
+              rows.add(["Tanggal", "Keterangan", "Akun Asal (From)", "Akun Tujuan (To)", "Jumlah (Rp)"]);
 
-            for (var tx in _allTransactions) {
-              rows.add([
-                tx['date'],
-                tx['description'].toString().isEmpty ? '-' : tx['description'],
-                tx['from_account'],
-                tx['to_account'],
-                tx['amount']
-              ]);
+              for (var tx in _allTransactions) {
+                rows.add([
+                  tx['date'],
+                  tx['description'].toString().isEmpty ? '-' : tx['description'],
+                  tx['from_account'],
+                  tx['to_account'],
+                  tx['amount']
+                ]);
+              }
+
+              String csvData = const ListToCsvConverter().convert(rows);
+              final tempDir = await getTemporaryDirectory();
+              final filePath = '${tempDir.path}/Jurnal_${_currentBookName.replaceAll(' ', '_')}.csv';
+              final file = File(filePath);
+              await file.writeAsString(csvData);
+
+              await Share.shareXFiles([XFile(filePath)], text: 'Export Jurnal Excel: $_currentBookName');
+            } catch (e) {
+              debugPrint('Error exporting excel: $e');
             }
-
-            String csvData = const ListToCsvConverter().convert(rows);
-            final tempDir = await getTemporaryDirectory();
-            final filePath = '${tempDir.path}/Jurnal_${_currentBookName.replaceAll(' ', '_')}.csv';
-            final file = File(filePath);
-            await file.writeAsString(csvData);
-
-            await Share.shareXFiles([XFile(filePath)], text: 'Export Jurnal Excel: $_currentBookName');
           }
 
           // FITUR IMPORT PROJECT (AUTO CREATE NEW BOOK)
           Future<void> _importProjectCSV() async {
-            FilePickerResult? result = await FilePicker.platform.pickFiles(
-              type: FileType.custom,
-              allowedExtensions: ['csv'],
-            );
+            try {
+              FilePickerResult? result = await FilePicker.platform.pickFiles(
+                type: FileType.custom,
+                allowedExtensions: ['csv'],
+              );
 
-            if (result != null && result.files.single.path != null) {
-              final file = File(result.files.single.path!);
-              final input = await file.readAsString();
-              List<List<dynamic>> fields = const CsvToListConverter().convert(input);
+              if (result != null && result.files.single.path != null) {
+                final file = File(result.files.single.path!);
+                final input = await file.readAsString();
+                List<List<dynamic>> fields = const CsvToListConverter().convert(input);
 
-              if (fields.length <= 1) return;
+                if (fields.length <= 1) return;
 
-              String newBookName = "Imported_${DateFormat('ddMM_HHmm').format(DateTime.now())}";
-              int newBookId = await widget.database.insert('books', {'name': newBookName});
+                String newBookName = "Imported_${DateFormat('ddMM_HHmm').format(DateTime.now())}";
+                int newBookId = await widget.database.insert('books', {'name': newBookName});
 
-              Set<String> createdAccs = {};
+                Set<String> createdAccs = {};
 
-              for (int i = 1; i < fields.length; i++) {
-                var row = fields[i];
-                if (row.length >= 5) {
-                  String date = row[0].toString();
-                  String fromAcc = row[1].toString();
-                  String toAcc = row[2].toString();
-                  String desc = row[3].toString();
-                  double amount = double.tryParse(row[4].toString()) ?? 0.0;
+                for (int i = 1; i < fields.length; i++) {
+                  var row = fields[i];
+                  if (row.length >= 5) {
+                    String date = row[0].toString();
+                    String fromAcc = row[1].toString();
+                    String toAcc = row[2].toString();
+                    String desc = row[3].toString();
+                    double amount = double.tryParse(row[4].toString()) ?? 0.0;
 
-                  if (!createdAccs.contains(fromAcc)) {
-                    await widget.database.insert('accounts', {'book_id': newBookId, 'name': fromAcc, 'type': 'Outgoing'});
-                    createdAccs.add(fromAcc);
+                    if (!createdAccs.contains(fromAcc)) {
+                      await widget.database.insert('accounts', {'book_id': newBookId, 'name': fromAcc, 'type': 'Outgoing'});
+                      createdAccs.add(fromAcc);
+                    }
+                    if (!createdAccs.contains(toAcc)) {
+                      await widget.database.insert('accounts', {'book_id': newBookId, 'name': toAcc, 'type': 'Asset'});
+                      createdAccs.add(toAcc);
+                    }
+
+                    await widget.database.insert('transactions', {
+                      'book_id': newBookId,
+                      'date': date,
+                      'from_account': fromAcc,
+                      'to_account': toAcc,
+                      'description': desc,
+                      'amount': amount
+                    });
                   }
-                  if (!createdAccs.contains(toAcc)) {
-                    await widget.database.insert('accounts', {'book_id': newBookId, 'name': toAcc, 'type': 'Asset'});
-                    createdAccs.add(toAcc);
-                  }
+                }
 
-                  await widget.database.insert('transactions', {
-                    'book_id': newBookId,
-                    'date': date,
-                    'from_account': fromAcc,
-                    'to_account': toAcc,
-                    'description': desc,
-                    'amount': amount
-                  });
+                final bData = await widget.database.query('books');
+                setState(() {
+                  _books = bData;
+                  _currentBookId = newBookId;
+                  _currentBookName = newBookName;
+                });
+                await _loadDataForCurrentBook();
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Buku baru "$newBookName" berhasil ditarik dari CSV!')),
+                  );
                 }
               }
-
-              final bData = await widget.database.query('books');
-              setState(() {
-                _books = bData;
-                _currentBookId = newBookId;
-                _currentBookName = newBookName;
-              });
-              await _loadDataForCurrentBook();
-
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Buku baru "$newBookName" berhasil ditarik dari CSV!')),
-                );
-              }
+            } catch (e) {
+              debugPrint('Error importing project: $e');
             }
           }
 
