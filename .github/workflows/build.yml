@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Number Format Fix
+        description: Aplikasi Bkper Add Account Bug Fix
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_num_format.db'),
+            p.join(dbPath, 'bkper_account_fix_v3.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -83,6 +83,7 @@ jobs:
               await db.execute('''
                 CREATE TABLE transactions(
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  book_id INTEGER,
                   date TEXT,
                   from_account TEXT,
                   to_account TEXT,
@@ -136,7 +137,6 @@ jobs:
           String _searchQuery = '';
           DateTime _selectedMonthPeriod = DateTime.now();
 
-          // FORMATTER ANGKA ALA BKPER (117,380,000.00)
           final NumberFormat _currencyFormat = NumberFormat('#,##0.00', 'en_US');
 
           @override
@@ -226,13 +226,15 @@ jobs:
             return total;
           }
 
+          // FIX: SIMPAN AKUN TERIKAT LANGSUNG KE _currentBookId
           Future<void> _addAccount(String name, String type) async {
+            if (_currentBookId == null) return;
             await widget.database.insert('accounts', {
               'book_id': _currentBookId,
               'name': name,
               'type': type,
             });
-            _loadDataForCurrentBook();
+            await _loadDataForCurrentBook();
           }
 
           Future<void> _updateAccount(int id, String name, String type) async {
@@ -242,13 +244,13 @@ jobs:
               where: 'id = ?',
               whereArgs: [id],
             );
-            _loadDataForCurrentBook();
+            await _loadDataForCurrentBook();
           }
 
           Future<void> _deleteAccount(int id, String name) async {
             await widget.database.delete('accounts', where: 'id = ?', whereArgs: [id]);
             await widget.database.delete('transactions', where: 'book_id = ? AND (from_account = ? OR to_account = ?)', whereArgs: [_currentBookId, name, name]);
-            _loadDataForCurrentBook();
+            await _loadDataForCurrentBook();
           }
 
           Future<void> _addTransaction(String fromAcc, String toAcc, String desc, double amount, DateTime date) async {
@@ -260,7 +262,7 @@ jobs:
               'description': desc,
               'amount': amount,
             });
-            _loadDataForCurrentBook();
+            await _loadDataForCurrentBook();
           }
 
           Future<void> _updateTransaction(int id, String fromAcc, String toAcc, String desc, double amount, DateTime date) async {
@@ -276,12 +278,12 @@ jobs:
               where: 'id = ?',
               whereArgs: [id],
             );
-            _loadDataForCurrentBook();
+            await _loadDataForCurrentBook();
           }
 
           Future<void> _deleteTransaction(int id) async {
             await widget.database.delete('transactions', where: 'id = ?', whereArgs: [id]);
-            _loadDataForCurrentBook();
+            await _loadDataForCurrentBook();
           }
 
           Color _getAccountColor(String type) {
@@ -306,14 +308,14 @@ jobs:
                   TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
-                    onPressed: () {
+                    onPressed: () async {
                       if (bookCtrl.text.isNotEmpty) {
                         if (bookEdit == null) {
-                          _createBook(bookCtrl.text);
+                          await _createBook(bookCtrl.text);
                         } else {
-                          _updateBook(bookEdit['id'], bookCtrl.text);
+                          await _updateBook(bookEdit['id'], bookCtrl.text);
                         }
-                        Navigator.pop(ctx);
+                        if (mounted) Navigator.pop(ctx);
                       }
                     },
                     child: Text(bookEdit == null ? 'Create' : 'Save'),
@@ -352,14 +354,14 @@ jobs:
                     TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
-                      onPressed: () {
+                      onPressed: () async {
                         if (nameCtrl.text.isNotEmpty) {
                           if (editAcc == null) {
-                            _addAccount(nameCtrl.text, selectedType);
+                            await _addAccount(nameCtrl.text, selectedType);
                           } else {
-                            _updateAccount(editAcc['id'], nameCtrl.text, selectedType);
+                            await _updateAccount(editAcc['id'], nameCtrl.text, selectedType);
                           }
-                          Navigator.pop(ctx);
+                          if (mounted) Navigator.pop(ctx);
                         }
                       },
                       child: Text(editAcc == null ? 'Create' : 'Save'),
@@ -494,9 +496,9 @@ jobs:
                             txEdit != null
                                 ? IconButton(
                                     icon: const Icon(Icons.delete_outline, color: Colors.grey),
-                                    onPressed: () {
-                                      _deleteTransaction(txEdit['id']);
-                                      Navigator.pop(ctx);
+                                    onPressed: () async {
+                                      await _deleteTransaction(txEdit['id']);
+                                      if (mounted) Navigator.pop(ctx);
                                     },
                                   )
                                 : const SizedBox(),
@@ -510,15 +512,15 @@ jobs:
                                 const SizedBox(width: 8),
                                 ElevatedButton(
                                   style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
-                                  onPressed: () {
+                                  onPressed: () async {
                                     final amt = double.tryParse(amountCtrl.text) ?? 0;
                                     if (amt > 0 && fromAcc != null && toAcc != null) {
                                       if (txEdit == null) {
-                                        _addTransaction(fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
+                                        await _addTransaction(fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
                                       } else {
-                                        _updateTransaction(txEdit['id'], fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
+                                        await _updateTransaction(txEdit['id'], fromAcc!, toAcc!, descCtrl.text, amt, pickerDate);
                                       }
-                                      Navigator.pop(ctx);
+                                      if (mounted) Navigator.pop(ctx);
                                     }
                                   },
                                   child: Text(txEdit == null ? 'Post' : 'Save'),
