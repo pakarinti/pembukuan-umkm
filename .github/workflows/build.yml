@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Java 17
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Export Import CSV Feature
+        description: Aplikasi Bkper Export Import CSV Fix
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -46,7 +46,8 @@ jobs:
           intl: ^0.19.0
           csv: ^6.0.0
           file_picker: ^8.0.0
-          share_plus: ^9.0.0
+          share_plus: ^10.0.0
+          cross_file: ^0.3.4+1
           path_provider: ^2.1.2
 
         dev_dependencies:
@@ -60,7 +61,6 @@ jobs:
 
         cat << 'EOF' > lib/main.dart
         import 'dart:io';
-        import 'dart:convert';
         import 'package:flutter/material.dart';
         import 'package:sqflite/sqflite.dart';
         import 'package:path/path.dart' as p;
@@ -68,13 +68,14 @@ jobs:
         import 'package:csv/csv.dart';
         import 'package:file_picker/file_picker.dart';
         import 'package:share_plus/share_plus.dart';
+        import 'package:cross_file/cross_file.dart';
         import 'package:path_provider/path_provider.dart';
 
         void main() async {
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_export_import_v1.db'),
+            p.join(dbPath, 'bkper_export_import_v2.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -295,7 +296,7 @@ jobs:
             await _loadDataForCurrentBook();
           }
 
-          // FITUR SIMPAN PROJECT (SHARE CSV)
+          // SIMPAN PROJECT (SHARE CSV)
           Future<void> _saveProjectCSV() async {
             List<List<dynamic>> rows = [];
             rows.add(["Date", "From Account", "To Account", "Description", "Amount"]);
@@ -319,7 +320,7 @@ jobs:
             await Share.shareXFiles([XFile(filePath)], text: 'Backup Project CSV: $_currentBookName');
           }
 
-          // FITUR EXPORT EXCEL (CSV JURNAL UMUM)
+          // EXPORT EXCEL (CSV JURNAL UMUM)
           Future<void> _exportExcel() async {
             List<List<dynamic>> rows = [];
             rows.add(["JURNAL UMUM - $_currentBookName"]);
@@ -344,7 +345,7 @@ jobs:
             await Share.shareXFiles([XFile(filePath)], text: 'Export Jurnal Excel: $_currentBookName');
           }
 
-          // FITUR IMPORT PROJECT (AUTO CREATE NEW BOOK)
+          // IMPORT PROJECT (AUTO CREATE NEW BOOK)
           Future<void> _importProjectCSV() async {
             FilePickerResult? result = await FilePicker.platform.pickFiles(
               type: FileType.custom,
@@ -372,7 +373,6 @@ jobs:
                   String desc = row[3].toString();
                   double amount = double.tryParse(row[4].toString()) ?? 0.0;
 
-                  // Auto Create Accounts
                   if (!createdAccs.contains(fromAcc)) {
                     await widget.database.insert('accounts', {'book_id': newBookId, 'name': fromAcc, 'type': 'Outgoing'});
                     createdAccs.add(fromAcc);
@@ -382,7 +382,6 @@ jobs:
                     createdAccs.add(toAcc);
                   }
 
-                  // Insert Transaction
                   await widget.database.insert('transactions', {
                     'book_id': newBookId,
                     'date': date,
@@ -758,7 +757,6 @@ jobs:
                       icon: const Icon(Icons.clear),
                       onPressed: () => setState(() => _selectedAccountFilter = null),
                     ),
-                  // MENU 3 TITIK POJOK KANAN ATAS ALA BUKU BESAR / BKPER
                   PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert),
                     onSelected: (val) {
