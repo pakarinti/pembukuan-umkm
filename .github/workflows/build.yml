@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Accounts Tab Sorting Fix
+        description: Aplikasi Bkper Export Import CSV Feature
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -44,6 +44,10 @@ jobs:
           sqflite: ^2.3.0
           path: ^1.8.3
           intl: ^0.19.0
+          csv: ^6.0.0
+          file_picker: ^8.0.0
+          share_plus: ^9.0.0
+          path_provider: ^2.1.2
 
         dev_dependencies:
           flutter_test:
@@ -55,16 +59,22 @@ jobs:
         EOF
 
         cat << 'EOF' > lib/main.dart
+        import 'dart:io';
+        import 'dart:convert';
         import 'package:flutter/material.dart';
         import 'package:sqflite/sqflite.dart';
         import 'package:path/path.dart' as p;
         import 'package:intl/intl.dart';
+        import 'package:csv/csv.dart';
+        import 'package:file_picker/file_picker.dart';
+        import 'package:share_plus/share_plus.dart';
+        import 'package:path_provider/path_provider.dart';
 
         void main() async {
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_accounts_sort.db'),
+            p.join(dbPath, 'bkper_export_import_v1.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -283,6 +293,121 @@ jobs:
           Future<void> _deleteTransaction(int id) async {
             await widget.database.delete('transactions', where: 'id = ?', whereArgs: [id]);
             await _loadDataForCurrentBook();
+          }
+
+          // FITUR SIMPAN PROJECT (SHARE CSV)
+          Future<void> _saveProjectCSV() async {
+            List<List<dynamic>> rows = [];
+            rows.add(["Date", "From Account", "To Account", "Description", "Amount"]);
+
+            for (var tx in _allTransactions) {
+              rows.add([
+                tx['date'],
+                tx['from_account'],
+                tx['to_account'],
+                tx['description'],
+                tx['amount']
+              ]);
+            }
+
+            String csvData = const ListToCsvConverter().convert(rows);
+            final tempDir = await getTemporaryDirectory();
+            final filePath = '${tempDir.path}/${_currentBookName.replaceAll(' ', '_')}_Backup.csv';
+            final file = File(filePath);
+            await file.writeAsString(csvData);
+
+            await Share.shareXFiles([XFile(filePath)], text: 'Backup Project CSV: $_currentBookName');
+          }
+
+          // FITUR EXPORT EXCEL (CSV JURNAL UMUM)
+          Future<void> _exportExcel() async {
+            List<List<dynamic>> rows = [];
+            rows.add(["JURNAL UMUM - $_currentBookName"]);
+            rows.add(["Tanggal", "Keterangan", "Akun Asal (From)", "Akun Tujuan (To)", "Jumlah (Rp)"]);
+
+            for (var tx in _allTransactions) {
+              rows.add([
+                tx['date'],
+                tx['description'].toString().isEmpty ? '-' : tx['description'],
+                tx['from_account'],
+                tx['to_account'],
+                tx['amount']
+              ]);
+            }
+
+            String csvData = const ListToCsvConverter().convert(rows);
+            final tempDir = await getTemporaryDirectory();
+            final filePath = '${tempDir.path}/Jurnal_${_currentBookName.replaceAll(' ', '_')}.csv';
+            final file = File(filePath);
+            await file.writeAsString(csvData);
+
+            await Share.shareXFiles([XFile(filePath)], text: 'Export Jurnal Excel: $_currentBookName');
+          }
+
+          // FITUR IMPORT PROJECT (AUTO CREATE NEW BOOK)
+          Future<void> _importProjectCSV() async {
+            FilePickerResult? result = await FilePicker.platform.pickFiles(
+              type: FileType.custom,
+              allowedExtensions: ['csv'],
+            );
+
+            if (result != null && result.files.single.path != null) {
+              final file = File(result.files.single.path!);
+              final input = await file.readAsString();
+              List<List<dynamic>> fields = const CsvToListConverter().convert(input);
+
+              if (fields.length <= 1) return;
+
+              String newBookName = "Imported_${DateFormat('ddMM_HHmm').format(DateTime.now())}";
+              int newBookId = await widget.database.insert('books', {'name': newBookName});
+
+              Set<String> createdAccs = {};
+
+              for (int i = 1; i < fields.length; i++) {
+                var row = fields[i];
+                if (row.length >= 5) {
+                  String date = row[0].toString();
+                  String fromAcc = row[1].toString();
+                  String toAcc = row[2].toString();
+                  String desc = row[3].toString();
+                  double amount = double.tryParse(row[4].toString()) ?? 0.0;
+
+                  // Auto Create Accounts
+                  if (!createdAccs.contains(fromAcc)) {
+                    await widget.database.insert('accounts', {'book_id': newBookId, 'name': fromAcc, 'type': 'Outgoing'});
+                    createdAccs.add(fromAcc);
+                  }
+                  if (!createdAccs.contains(toAcc)) {
+                    await widget.database.insert('accounts', {'book_id': newBookId, 'name': toAcc, 'type': 'Asset'});
+                    createdAccs.add(toAcc);
+                  }
+
+                  // Insert Transaction
+                  await widget.database.insert('transactions', {
+                    'book_id': newBookId,
+                    'date': date,
+                    'from_account': fromAcc,
+                    'to_account': toAcc,
+                    'description': desc,
+                    'amount': amount
+                  });
+                }
+              }
+
+              final bData = await widget.database.query('books');
+              setState(() {
+                _books = bData;
+                _currentBookId = newBookId;
+                _currentBookName = newBookName;
+              });
+              await _loadDataForCurrentBook();
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Buku baru "$newBookName" berhasil ditarik dari CSV!')),
+                );
+              }
+            }
           }
 
           Color _getAccountColor(String type) {
@@ -556,8 +681,6 @@ jobs:
             final outgoingAccs = _allAccounts.where((a) => a['type'] == 'Outgoing').toList();
             final incomingOutgoingAccs = [...incomingAccs, ...outgoingAccs];
 
-            // PENGURUTAN SEPENUHNYA ALA BKPER UNTUK TAB ACCOUNTS:
-            // Asset (Biru) -> Liability (Kuning) -> Incoming (Hijau) -> Outgoing (Merah)
             final sortedAllAccountsTab = [
               ...assetAccs,
               ...liabilityAccs,
@@ -634,7 +757,49 @@ jobs:
                     IconButton(
                       icon: const Icon(Icons.clear),
                       onPressed: () => setState(() => _selectedAccountFilter = null),
-                    )
+                    ),
+                  // MENU 3 TITIK POJOK KANAN ATAS ALA BUKU BESAR / BKPER
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (val) {
+                      if (val == 'IMPORT') _importProjectCSV();
+                      if (val == 'SAVE') _saveProjectCSV();
+                      if (val == 'EXCEL') _exportExcel();
+                    },
+                    itemBuilder: (ctx) => [
+                      const PopupMenuItem(
+                        value: 'IMPORT',
+                        child: Row(
+                          children: [
+                            Icon(Icons.file_upload_outlined, color: Colors.blueAccent, size: 20),
+                            SizedBox(width: 10),
+                            Text('Import Project (.csv)'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'SAVE',
+                        child: Row(
+                          children: [
+                            Icon(Icons.share_outlined, color: Colors.green, size: 20),
+                            SizedBox(width: 10),
+                            Text('Save / Share Project'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'EXCEL',
+                        child: Row(
+                          children: [
+                            Icon(Icons.table_chart_outlined, color: Colors.amber, size: 20),
+                            SizedBox(width: 10),
+                            Text('Export Excel (.csv)'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
               drawer: Drawer(
