@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Fixed Category Group Order
+        description: Aplikasi Bkper Number Format Fix
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_group_order.db'),
+            p.join(dbPath, 'bkper_num_format.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -83,7 +83,6 @@ jobs:
               await db.execute('''
                 CREATE TABLE transactions(
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  book_id INTEGER,
                   date TEXT,
                   from_account TEXT,
                   to_account TEXT,
@@ -136,6 +135,9 @@ jobs:
           String? _selectedAccountFilter;
           String _searchQuery = '';
           DateTime _selectedMonthPeriod = DateTime.now();
+
+          // FORMATTER ANGKA ALA BKPER (117,380,000.00)
+          final NumberFormat _currencyFormat = NumberFormat('#,##0.00', 'en_US');
 
           @override
           void initState() {
@@ -545,13 +547,10 @@ jobs:
               return matchFilter && matchSearch;
             }).toList();
 
-            // PENGELOMPOKAN URUTAN PERSIS BKPER:
-            // Balance Sheet: ASSET dulu baru LIABILITY
             final assetAccs = _allAccounts.where((a) => a['type'] == 'Asset').toList();
             final liabilityAccs = _allAccounts.where((a) => a['type'] == 'Liability').toList();
             final balanceSheetAccs = [...assetAccs, ...liabilityAccs];
 
-            // Incoming & Outgoing: INCOMING dulu baru OUTGOING
             final incomingAccs = _allAccounts.where((a) => a['type'] == 'Incoming').toList();
             final outgoingAccs = _allAccounts.where((a) => a['type'] == 'Outgoing').toList();
             final incomingOutgoingAccs = [...incomingAccs, ...outgoingAccs];
@@ -780,6 +779,7 @@ jobs:
                             itemCount: filteredList.length,
                             itemBuilder: (ctx, i) {
                               final tx = filteredList[i];
+                              final formattedAmount = _currencyFormat.format(tx['amount']);
                               return Container(
                                 decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white12))),
                                 child: ListTile(
@@ -788,7 +788,7 @@ jobs:
                                   title: Text(tx['description'].isEmpty ? '${tx['from_account']} → ${tx['to_account']}' : tx['description']),
                                   subtitle: Text('${tx['date']} • ${tx['from_account']} → ${tx['to_account']}'),
                                   trailing: Text(
-                                    'Rp ${tx['amount'].toStringAsFixed(0)}',
+                                    formattedAmount,
                                     style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent),
                                   ),
                                 ),
@@ -809,6 +809,7 @@ jobs:
           Widget _buildTransactionDrawerItem(Map<String, dynamic> acc) {
             double total = _getAccountTotalMonthly(acc);
             Color accColor = _getAccountColor(acc['type']);
+            final formattedTotal = _currencyFormat.format(total);
 
             return Container(
               margin: const EdgeInsets.symmetric(vertical: 2),
@@ -820,7 +821,7 @@ jobs:
                 contentPadding: const EdgeInsets.only(left: 8),
                 title: Text(acc['name'], style: const TextStyle(color: Colors.white, fontSize: 13)),
                 trailing: Text(
-                  'Rp ${total.toStringAsFixed(0)}',
+                  formattedTotal,
                   style: TextStyle(color: accColor, fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 onTap: () {
