@@ -19,6 +19,9 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v3
+
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
@@ -37,7 +40,7 @@ jobs:
           sed -i 's/version "1.7.10"/version "1.9.22"/g' android/settings.gradle
         fi
 
-        # Konfigurasi Pubspec (Tanpa Launcher Icons agar aman sentosa)
+        # Konfigurasi Pubspec
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
         description: Kasimpel Pembukuan UMKM Gratis
@@ -1065,7 +1068,7 @@ jobs:
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
                 body: Column(
                   children: [
