@@ -30,7 +30,7 @@ jobs:
         
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
-        description: Aplikasi Bkper Add Account Bug Fix
+        description: Aplikasi Bkper Accounts Tab Sorting Fix
         publish_to: 'none'
         version: 1.0.0+1
 
@@ -64,7 +64,7 @@ jobs:
           WidgetsFlutterBinding.ensureInitialized();
           final dbPath = await getDatabasesPath();
           final database = await openDatabase(
-            p.join(dbPath, 'bkper_account_fix_v3.db'),
+            p.join(dbPath, 'bkper_accounts_sort.db'),
             onCreate: (db, version) async {
               await db.execute('''
                 CREATE TABLE books(
@@ -226,7 +226,6 @@ jobs:
             return total;
           }
 
-          // FIX: SIMPAN AKUN TERIKAT LANGSUNG KE _currentBookId
           Future<void> _addAccount(String name, String type) async {
             if (_currentBookId == null) return;
             await widget.database.insert('accounts', {
@@ -557,6 +556,15 @@ jobs:
             final outgoingAccs = _allAccounts.where((a) => a['type'] == 'Outgoing').toList();
             final incomingOutgoingAccs = [...incomingAccs, ...outgoingAccs];
 
+            // PENGURUTAN SEPENUHNYA ALA BKPER UNTUK TAB ACCOUNTS:
+            // Asset (Biru) -> Liability (Kuning) -> Incoming (Hijau) -> Outgoing (Merah)
+            final sortedAllAccountsTab = [
+              ...assetAccs,
+              ...liabilityAccs,
+              ...incomingAccs,
+              ...outgoingAccs,
+            ];
+
             return Scaffold(
               appBar: AppBar(
                 backgroundColor: const Color(0xFF1C1D24),
@@ -711,12 +719,12 @@ jobs:
                               ),
                               const Divider(color: Colors.white12),
                               Expanded(
-                                child: _allAccounts.isEmpty
+                                child: sortedAllAccountsTab.isEmpty
                                     ? const Center(child: Text('Belum ada akun.', style: TextStyle(color: Colors.grey, fontSize: 11)))
                                     : ListView.builder(
-                                        itemCount: _allAccounts.length,
+                                        itemCount: sortedAllAccountsTab.length,
                                         itemBuilder: (ctx, i) {
-                                          final acc = _allAccounts[i];
+                                          final acc = sortedAllAccountsTab[i];
                                           return ListTile(
                                             leading: Container(
                                               width: 14,
