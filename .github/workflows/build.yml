@@ -37,6 +37,21 @@ jobs:
           sed -i 's/version "1.7.10"/version "1.9.22"/g' android/settings.gradle
         fi
 
+        # MEMBUAT FOLDER & FILE ICON AMAN SECARA OTOMATIS
+        mkdir -p assets
+        # Membuat gambar PNG transparan 512x512 via Python agar langsung terbaca oleh Flutter Launcher Icons
+        python3 -c "
+        import struct, zlib
+        def make_png(width, height):
+            iv = b'\x00' + b'\xff\xff\xff' * width
+            data = zlib.compress(iv)
+            def chunk(tag, data):
+                return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+            return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) + chunk(b'IDAT', data) + chunk(b'IEND', b'')
+        with open('assets/app_icon.png', 'wb') as f:
+            f.write(make_png(512, 512))
+        "
+
         # Konfigurasi Pubspec
         cat << 'EOF' > pubspec.yaml
         name: pembukuan
@@ -77,13 +92,6 @@ jobs:
           assets:
             - assets/app_icon.png
         EOF
-
-        # Buat folder assets dan buat placeholder icon polos berbasis file text/dummy jika belum ada
-        mkdir -p assets
-        if [ ! -f "assets/app_icon.png" ]; then
-          # Membuat file gambar PNG transparan minimalis via python agar tidak error
-          python3 -c "import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/flutter/assets-for-flutter-tests/master/flutter_logo_package/assets/flutter_logo.png', 'assets/app_icon.png')" || true
-        fi
 
         # Inject AdMob App ID ke AndroidManifest.xml
         cat << 'EOF' > android/app/src/main/AndroidManifest.xml
