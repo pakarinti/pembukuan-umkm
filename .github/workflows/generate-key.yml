@@ -1,0 +1,22 @@
+name: Generate Keystore for Reset
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Generate New Keystore and Certificate
+      run: |
+        keytool -genkeypair -v -keystore release.keystore -alias upload -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Kasimpel, OU=Dev, O=Kasimpel, L=Jakarta, ST=Jakarta, C=ID"
+        keytool -exportcert -rfc -keystore release.keystore -alias upload -storepass 123456 -file upload_certificate.pem
+        base64 -w 0 release.keystore > keystore_base64.txt
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: play-store-reset-files
+        path: |
+          upload_certificate.pem
+          keystore_base64.txt
