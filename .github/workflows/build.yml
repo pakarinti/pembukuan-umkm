@@ -28,10 +28,10 @@ jobs:
       run: |
         flutter create --org com.kasimpel.app --project-name pembukuan .
         
-        # Upgrade spesifikasi Android
+        # Upgrade spesifikasi Android (SUNTIKAN KODE: Target SDK 36 Wajib Google Play)
         sed -i 's/flutter.minSdkVersion/24/g' android/app/build.gradle
-        sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
-        sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
+        sed -i 's/flutter.compileSdkVersion/36/g' android/app/build.gradle
+        sed -i 's/flutter.targetSdkVersion/36/g' android/app/build.gradle
         if [ -f "android/settings.gradle" ]; then
           sed -i 's/version "1.7.10"/version "1.9.22"/g' android/settings.gradle
         fi
